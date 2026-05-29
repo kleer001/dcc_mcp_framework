@@ -216,6 +216,136 @@ def test_create_node_real(connection_real):
 
 **Verify mock parity:** Mock test count == addon handler count.
 
+## Handler Organization
+
+Keep MCP tool definitions separate from addon command handlers for clarity and testability:
+
+```
+tools/domain.py          ← MCP-side: tool signatures, @mcp.tool() decorators
+addon.py                 ← Addon-side: command dispatch, _handle_* functions
+mock.py                  ← Mock-side: _cmd_* functions for testing
+```
+
+**Naming convention:** Tool name syncs with handler name:
+
+```python
+# tools/graph.py
+@mcp.tool()
+def create_node(class_name: str, name: str) -> dict:
+    """Create a {{NODE_NOUN}}."""
+    return conn.send_command("create_node", {...})
+
+# addon.py
+def _handle_create_node(params):
+    """Addon receives this command and executes."""
+    dcc = _get_{{dcc}}()
+    node = dcc.createNode(params["class_name"])
+    return {"status": "ok", "result": {"name": node.name()}}
+
+# mock.py
+def _cmd_create_node(self, params):
+    """Mock version for testing."""
+    self.nodes[params["name"]] = {"class": params["class_name"]}
+    return {"status": "ok", "result": {"name": params["name"]}}
+```
+
+**Handler dispatch in addon.py:**
+
+```python
+COMMANDS = {
+    "create_node": _handle_create_node,
+    "delete_node": _handle_delete_node,
+    "modify_node": _handle_modify_node,
+    # ...
+}
+
+def _process_command(data):
+    cmd_type = data.get("type")
+    params = data.get("params", {})
+    handler = COMMANDS.get(cmd_type)
+    if handler:
+        return handler(params)
+    else:
+        return {"status": "error", "error": f"Unknown command: {cmd_type}"}
+```
+
+## Undo Management
+
+Commands that mutate {{DCC}} state should support undo. Use `undo.py` from advanced features:
+
+**Step 1: Mark mutating commands**
+
+```python
+# In undo.py (generated from template)
+MUTATING_COMMANDS = {
+    "create_{{NODE_NOUN}}",
+    "delete_{{NODE_NOUN}}",
+    "modify_{{NODE_NOUN}}",
+    "connect_{{NODE_NOUN}}s",
+    "set_knob",
+}
+
+def should_push_undo(command_type: str) -> bool:
+    return command_type in MUTATING_COMMANDS
+```
+
+**Step 2: Push undo point before executing**
+
+```python
+# In addon.py
+from {{dcc}}mcp.undo import should_push_undo
+
+def _process_command(data):
+    cmd_type = data.get("type")
+    params = data.get("params", {})
+
+    # Push undo point BEFORE executing
+    if should_push_undo(cmd_type):
+        _push_undo_point(cmd_type)
+
+    handler = COMMANDS.get(cmd_type)
+    return handler(params) if handler else {"status": "error", "error": "Unknown"}
+```
+
+**Step 3: Implement DCC-specific undo**
+
+```python
+# In addon.py (DCC-specific)
+def _push_undo_point(command_type: str):
+    """Push undo point before mutating command."""
+    dcc = _get_{{dcc}}()
+
+    # {{DCC}}-specific undo
+    # Example (Nuke):
+    #   with nuke.Undo():
+    #       pass  # Undo point created
+
+    # Example (Blender):
+    #   bpy.ops.ed.undo_push(message=f"MCP: {command_type}")
+
+    # Example (Houdini, headless-safe):
+    #   if hasattr(hou, 'undos'):
+    #       # Create undo point
+    #       pass
+```
+
+**Step 4: Provide undo/redo tools**
+
+```python
+# tools/undo.py or in main graph.py
+@mcp.tool()
+def undo() -> dict:
+    """Undo the last action."""
+    return conn.send_command("undo")
+
+@mcp.tool()
+def redo() -> dict:
+    """Redo the last undone action."""
+    return conn.send_command("redo")
+```
+
+See `reference/undo.py.tmpl` and `templates/advanced/undo.py.tmpl` for complete implementation.
+
 ## Code Style
 
 - `ruff check .` — Linting
