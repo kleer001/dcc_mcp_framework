@@ -1,0 +1,165 @@
+"""Undo/redo support for {{PRETTY_DCC}} MCP.
+
+Tracks which commands mutate {{DCC}} state and can be undone.
+Provides undo() and redo() tools for Claude to navigate history.
+
+DCC-specific implementation:
+  - Nuke: Use nuke.Undo() context manager
+  - Blender: Use bpy.ops.ed.undo_push(message=...)
+  - Houdini: Use hou.undos (may be None in headless)
+
+This template provides a basic structure; full integration requires DCC-specific code.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from {{dcc}}mcp.server import {{DCC}}MCPServer
+
+log = logging.getLogger("{{dcc}}mcp.undo")
+
+
+# Commands that mutate {{PRETTY_DCC}} state and should trigger undo points
+MUTATING_COMMANDS = {
+    "create_{{NODE_NOUN}}",
+    "delete_{{NODE_NOUN}}",
+    "modify_{{NODE_NOUN}}",
+    "connect_{{NODE_NOUN}}s",
+    "set_knob",
+    "import_scene",
+    "export_scene",
+    "set_frame",
+}
+
+# Commands that are read-only (should not trigger undo)
+READ_ONLY_COMMANDS = {
+    "get_scene_info",
+    "get_{{NODE_NOUN}}_info",
+    "list_{{NODE_NOUN}}s",
+    "ping",
+}
+
+
+def is_mutating(command_type: str) -> bool:
+    """Check if a command mutates {{PRETTY_DCC}} state.
+
+    Args:
+        command_type: Command name (e.g., 'create_node')
+
+    Returns:
+        True if command should trigger undo point
+    """
+    return command_type in MUTATING_COMMANDS
+
+
+def should_push_undo(command_type: str) -> bool:
+    """Determine if undo point should be pushed before command.
+
+    Args:
+        command_type: Command name
+
+    Returns:
+        True if undo_push should be called before executing
+    """
+    # Push undo if:
+    # 1. Command is mutating AND
+    # 2. Command is not explicitly read-only
+    return is_mutating(command_type) and command_type not in READ_ONLY_COMMANDS
+
+
+def pre_execute_undo_push(command_type: str) -> None:
+    """Called by addon BEFORE executing a command.
+
+    Pushes an undo point if the command will mutate state.
+
+    Args:
+        command_type: Command about to be executed
+
+    DCC-specific implementation:
+        # Nuke:
+        if should_push_undo(command_type):
+            with nuke.Undo():
+                pass  # Undo point created
+
+        # Blender:
+        if should_push_undo(command_type):
+            bpy.ops.ed.undo_push(message=f"MCP: {command_type}")
+
+        # Houdini (headless-safe):
+        if should_push_undo(command_type) and hou.undos:
+            # Create undo point
+            pass
+    """
+    if should_push_undo(command_type):
+        log.debug(f"Pushing undo point for: {command_type}")
+        # TODO: Implement DCC-specific undo push
+        # Example (DCC-specific):
+        # _get_{{dcc}}().undo_push(f"MCP: {command_type}")
+
+
+def register(server: {{DCC}}MCPServer):
+    """Register undo/redo tools with the MCP server.
+
+    Call this in server.py:
+        from {{dcc}}mcp import undo
+        undo.register(server)
+    """
+    mcp = server.mcp
+
+    @mcp.tool()
+    def undo() -> dict:
+        """Undo the last {{PRETTY_DCC}} action.
+
+        Returns:
+            Status
+        """
+        try:
+            # TODO: Implement DCC-specific undo
+            # Example (DCC-specific):
+            # dcc = _get_{{dcc}}()
+            # dcc.undo()
+            log.info("Undo executed")
+            return {"status": "ok", "message": "Undo executed"}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    @mcp.tool()
+    def redo() -> dict:
+        """Redo the last undone {{PRETTY_DCC}} action.
+
+        Returns:
+            Status
+        """
+        try:
+            # TODO: Implement DCC-specific redo
+            # Example (DCC-specific):
+            # dcc = _get_{{dcc}}()
+            # dcc.redo()
+            log.info("Redo executed")
+            return {"status": "ok", "message": "Redo executed"}
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def get_undo_state() -> dict:
+        """Get current undo/redo state.
+
+        Returns:
+            Current undo position and history count
+        """
+        try:
+            # TODO: Implement DCC-specific undo state
+            # Example (DCC-specific):
+            # dcc = _get_{{dcc}}()
+            # state = dcc.get_undo_state()
+            return {
+                "status": "ok",
+                "undo_available": False,  # TODO: actual value
+                "redo_available": False,  # TODO: actual value
+                "history_count": 0,  # TODO: actual value
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}

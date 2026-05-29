@@ -1,0 +1,277 @@
+"""RAG (Retrieval-Augmented Generation) for offline documentation search.
+
+Embeds {{PRETTY_DCC}} documentation and provides semantic search via MCP tools.
+Runs fully offline—no external API calls during development.
+
+Setup:
+  1. Download docs: python scripts/ingest_docs.py
+  2. Build index: python -m {{dcc}}mcp.rag --build
+  3. Search via MCP: search_docs("how do I create a {{NODE_NOUN}}?")
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from {{dcc}}mcp.server import {{DCC}}MCPServer
+
+log = logging.getLogger("{{dcc}}mcp.rag")
+
+# Try to import optional embedding library
+try:
+    import anthropic
+    HAS_EMBEDDINGS = True
+except ImportError:
+    HAS_EMBEDDINGS = False
+
+
+class RAGStore:
+    """Embedded documentation store with semantic search."""
+
+    def __init__(self, docs_dir: str | None = None):
+        self.docs_dir = Path(docs_dir) if docs_dir else Path.home() / f".{{dcc}}mcp" / "docs"
+        self.index_file = self.docs_dir / "index.json"
+        self.docs = {}
+        self.embeddings = {}
+        self._load_index()
+
+    def _load_index(self):
+        """Load pre-built index from disk."""
+        if not self.index_file.exists():
+            log.warning(f"No index found at {self.index_file}. Run: python -m {{dcc}}mcp.rag --build")
+            return
+
+        try:
+            with open(self.index_file) as f:
+                data = json.load(f)
+                self.docs = data.get("docs", {})
+                self.embeddings = data.get("embeddings", {})
+                log.info(f"Loaded {len(self.docs)} documents from index")
+        except Exception as e:
+            log.error(f"Failed to load index: {e}")
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        if not a or not b:
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        mag_a = sum(x * x for x in a) ** 0.5
+        mag_b = sum(x * x for x in b) ** 0.5
+        if mag_a == 0 or mag_b == 0:
+            return 0.0
+        return dot / (mag_a * mag_b)
+
+    def search(self, query: str, limit: int = 5) -> list[dict]:
+        """Search docs by semantic similarity (if embeddings available).
+
+        Falls back to keyword search if embeddings not available.
+        """
+        if not self.docs:
+            return []
+
+        # If we have embeddings, use semantic search
+        if HAS_EMBEDDINGS and self.embeddings:
+            return self._semantic_search(query, limit)
+
+        # Fall back to keyword search
+        return self._keyword_search(query, limit)
+
+    def _semantic_search(self, query: str, limit: int) -> list[dict]:
+        """Search using vector embeddings."""
+        try:
+            client = anthropic.Anthropic()
+            response = client.messages.model_resources.beta.embeddings.embed_batch(
+                model="claude-3-5-sonnet-20241022",
+                input=[query],
+            )
+            query_embedding = response.embeddings[0].embedding
+        except Exception as e:
+            log.debug(f"Embedding failed, falling back to keyword search: {e}")
+            return self._keyword_search(query, limit)
+
+        # Score all documents by similarity to query embedding
+        scores = []
+        for doc_id, doc in self.docs.items():
+            if doc_id not in self.embeddings:
+                continue
+            similarity = self._cosine_similarity(query_embedding, self.embeddings[doc_id])
+            scores.append((doc_id, doc, similarity))
+
+        # Return top results
+        scores.sort(key=lambda x: x[2], reverse=True)
+        return [
+            {"title": doc["title"], "content": doc["content"], "score": score}
+            for doc_id, doc, score in scores[:limit]
+        ]
+
+    def _keyword_search(self, query: str, limit: int) -> list[dict]:
+        """Simple keyword search (fallback if embeddings not available)."""
+        query_lower = query.lower()
+        scores = []
+
+        for doc_id, doc in self.docs.items():
+            title_lower = doc["title"].lower()
+            content_lower = doc["content"].lower()
+
+            # Simple scoring: keyword matches in title (boost) + content
+            title_matches = title_lower.count(query_lower)
+            content_matches = content_lower.count(query_lower)
+            score = (title_matches * 10) + content_matches
+
+            if score > 0:
+                scores.append((doc_id, doc, score))
+
+        scores.sort(key=lambda x: x[2], reverse=True)
+        return [
+            {"title": doc["title"], "content": doc["content"][:500], "score": score / 100}
+            for doc_id, doc, score in scores[:limit]
+        ]
+
+    def build_index(self, docs_dir: str | None = None, force: bool = False) -> int:
+        """Build embeddings index from documents.
+
+        Requires anthropic SDK for embeddings.
+        """
+        if not HAS_EMBEDDINGS:
+            log.error("RAG requires 'anthropic' SDK. Install: pip install anthropic")
+            return 0
+
+        docs_dir = Path(docs_dir) if docs_dir else self.docs_dir
+        if not docs_dir.exists():
+            log.error(f"Docs directory not found: {docs_dir}")
+            return 0
+
+        # Collect all markdown files
+        doc_files = list(docs_dir.glob("**/*.md"))
+        if not doc_files:
+            log.warning(f"No markdown files found in {docs_dir}")
+            return 0
+
+        log.info(f"Building index from {len(doc_files)} files...")
+
+        # Load documents
+        docs = {}
+        for i, path in enumerate(doc_files):
+            try:
+                content = path.read_text(encoding="utf-8")
+                title = path.stem.replace("_", " ").title()
+                doc_id = f"doc_{i}"
+                docs[doc_id] = {
+                    "title": title,
+                    "content": content,
+                    "path": str(path),
+                }
+            except Exception as e:
+                log.warning(f"Failed to read {path}: {e}")
+
+        if not docs:
+            log.error("No documents loaded")
+            return 0
+
+        # Generate embeddings (batch)
+        log.info(f"Generating embeddings for {len(docs)} documents...")
+        try:
+            client = anthropic.Anthropic()
+            batch_size = 100
+            embeddings = {}
+
+            for i in range(0, len(docs), batch_size):
+                batch_docs = list(docs.values())[i : i + batch_size]
+                batch_ids = list(docs.keys())[i : i + batch_size]
+                batch_contents = [doc["content"][:8000] for doc in batch_docs]  # Truncate to 8K tokens
+
+                response = client.messages.model_resources.beta.embeddings.embed_batch(
+                    model="claude-3-5-sonnet-20241022",
+                    input=batch_contents,
+                )
+
+                for doc_id, embedding_obj in zip(batch_ids, response.embeddings):
+                    embeddings[doc_id] = embedding_obj.embedding
+
+                log.info(f"Embedded {min(i + batch_size, len(docs))}/{len(docs)}")
+
+        except Exception as e:
+            log.error(f"Embedding failed: {e}")
+            return 0
+
+        # Save index
+        self.docs_dir.mkdir(parents=True, exist_ok=True)
+        index = {"docs": docs, "embeddings": embeddings}
+
+        with open(self.index_file, "w") as f:
+            json.dump(index, f, indent=2)
+
+        log.info(f"Index saved to {self.index_file}")
+        return len(docs)
+
+
+# Global RAG store (lazily initialized)
+_rag_store: RAGStore | None = None
+
+
+def init(docs_dir: str | None = None) -> RAGStore:
+    """Initialize the RAG store."""
+    global _rag_store
+    if _rag_store is None:
+        _rag_store = RAGStore(docs_dir)
+    return _rag_store
+
+
+def register(server: {{DCC}}MCPServer):
+    """Register RAG tools with the MCP server."""
+    mcp = server.mcp
+    store = init()
+
+    if not store.docs:
+        log.warning("RAG initialized but no documents indexed. Run: python -m {{dcc}}mcp.rag --build")
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def search_docs(query: str, limit: int = 5) -> dict:
+        """Search {{PRETTY_DCC}} documentation.
+
+        Offline semantic search across embedded documentation.
+        Returns the most relevant passages.
+
+        Args:
+            query: What you want to find (e.g., "how to create a {{NODE_NOUN}}")
+            limit: Maximum results to return (default 5)
+        """
+        results = store.search(query, limit=limit)
+        return {
+            "query": query,
+            "results": results,
+            "total": len(store.docs),
+        }
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="RAG index builder")
+    parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Build embeddings index from {{PRETTY_DCC}} docs",
+    )
+    parser.add_argument(
+        "--docs-dir",
+        help="Path to docs directory (default: ~/.{{dcc}}mcp/docs)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force rebuild even if index exists",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+
+    if args.build:
+        store = RAGStore(args.docs_dir)
+        count = store.build_index(args.docs_dir, force=args.force)
+        print(f"✓ Built index: {count} documents")

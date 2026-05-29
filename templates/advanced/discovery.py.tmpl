@@ -1,0 +1,366 @@
+"""DCC Auto-Discovery and Headless Launch
+
+Discovers {{PRETTY_DCC}} installation, detects version, checks license,
+and can launch {{DCC}} in headless mode with MCP addon pre-loaded.
+
+Supports multiple platforms (Windows, macOS, Linux) and DCC versions.
+
+Usage:
+    from {{dcc}}mcp import discovery
+
+    # Find {{DCC}}
+    result = discovery.find_{{dcc}}()
+    if result.found:
+        print(f"Found {{DCC}}: {result.best_install.path}")
+
+        # Launch headless
+        proc = discovery.launch_headless(result.best_install)
+        proc.wait()
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+log = logging.getLogger("{{dcc}}mcp.discovery")
+
+
+@dataclass
+class {{DCC}}Install:
+    """A {{PRETTY_DCC}} installation."""
+
+    path: Path
+    version: str
+    is_license_valid: bool = False
+    license_type: str = "unknown"  # 'eval', 'commercial', 'indie'
+    breadcrumbs: list[Path] = None  # Recently opened files
+
+    def __post_init__(self):
+        if self.breadcrumbs is None:
+            self.breadcrumbs = []
+
+    def __str__(self):
+        return f"{{{{DCC}}}} {self.version} @ {self.path}"
+
+
+@dataclass
+class DiscoveryResult:
+    """Result of DCC discovery."""
+
+    found: bool
+    best_install: Optional[{{DCC}}Install] = None
+    all_installs: list[{{DCC}}Install] = None
+    search_paths: dict[str, list[Path]] = None
+
+    def __post_init__(self):
+        if self.all_installs is None:
+            self.all_installs = []
+        if self.search_paths is None:
+            self.search_paths = {}
+
+
+class {{DCC}}Discoverer:
+    """Discover {{PRETTY_DCC}} installations."""
+
+    def __init__(self):
+        self.platform = sys.platform
+        self.results: list[{{DCC}}Install] = []
+
+    def discover(self) -> DiscoveryResult:
+        """Search for {{PRETTY_DCC}} installations.
+
+        Uses 5-tier search strategy:
+          1. {{DCC_ENV_VAR}} environment variable
+          2. Standard install paths (OS-specific)
+          3. Running processes (get path from /proc or similar)
+          4. Mounted volumes (check common mount points)
+          5. Fallback: common custom paths
+
+        Returns:
+            DiscoveryResult with best install and all found installs
+        """
+        search_paths = {}
+
+        # Tier 1: Environment variable
+        if "{{DCC_ENV_VAR}}" in os.environ:
+            env_path = Path(os.environ["{{DCC_ENV_VAR}}"])
+            if self._validate_install(env_path):
+                log.info(f"Found {{DCC}} via env var: {env_path}")
+                self.results.append({{DCC}}Install(path=env_path, version="unknown"))
+                search_paths["env_var"] = [env_path]
+
+        # Tier 2: Standard install paths (OS-specific)
+        standard_paths = self._get_standard_paths()
+        for path in standard_paths:
+            if self._validate_install(path):
+                install = self._create_install(path)
+                if install:
+                    self.results.append(install)
+        search_paths["standard"] = standard_paths
+
+        # Tier 3: Running processes
+        # (Platform-specific; example for Nuke)
+        running = self._find_running_instances()
+        for path in running:
+            if self._validate_install(path):
+                install = self._create_install(path)
+                if install:
+                    self.results.append(install)
+        search_paths["running"] = running
+
+        # Tier 4: Mounted volumes (slow; optional)
+        # Skipped by default to avoid long searches
+
+        # Deduplicate by path
+        seen = set()
+        unique_results = []
+        for install in self.results:
+            if install.path not in seen:
+                unique_results.append(install)
+                seen.add(install.path)
+        self.results = unique_results
+
+        # Sort by version (newest first)
+        self.results.sort(
+            key=lambda x: self._parse_version(x.version),
+            reverse=True,
+        )
+
+        found = len(self.results) > 0
+        best = self.results[0] if found else None
+
+        return DiscoveryResult(
+            found=found,
+            best_install=best,
+            all_installs=self.results,
+            search_paths=search_paths,
+        )
+
+    def _get_standard_paths(self) -> list[Path]:
+        """Get standard {{DCC}} install paths per OS."""
+        if self.platform == "linux":
+            return [
+                Path("/opt/{{dcc}}"),
+                Path("/opt/{{dcc}}_*/bin/{{dcc}}"),
+                Path(f"{Path.home()}/.{{dcc}}"),
+            ]
+        elif self.platform == "darwin":
+            return [
+                Path("/Applications/{{PRETTY_DCC}}.app"),
+                Path(f"{Path.home()}/Applications/{{PRETTY_DCC}}.app"),
+            ]
+        elif self.platform == "win32":
+            return [
+                Path("C:/Program Files/{{PRETTY_DCC}}"),
+                Path("C:/Program Files (x86)/{{PRETTY_DCC}}"),
+                Path(f"{Path.home()}/AppData/Local/{{PRETTY_DCC}}"),
+            ]
+        return []
+
+    def _find_running_instances(self) -> list[Path]:
+        """Find running {{DCC}} processes and extract their path."""
+        paths = []
+        try:
+            if self.platform == "linux":
+                # Try ps command
+                result = subprocess.run(
+                    ["pgrep", "-f", "{{dcc}}"],
+                    capture_output=True,
+                    text=True,
+                )
+                for pid_str in result.stdout.strip().split():
+                    try:
+                        pid = int(pid_str)
+                        exe_path = Path(f"/proc/{pid}/exe").resolve()
+                        if exe_path.exists():
+                            paths.append(exe_path.parent)
+                    except (ValueError, OSError):
+                        pass
+            elif self.platform == "darwin":
+                # Try lsof on macOS
+                result = subprocess.run(
+                    ["pgrep", "-f", "{{dcc}}"],
+                    capture_output=True,
+                    text=True,
+                )
+                for pid_str in result.stdout.strip().split():
+                    try:
+                        pid = int(pid_str)
+                        result = subprocess.run(
+                            ["lsof", "-p", str(pid)],
+                            capture_output=True,
+                            text=True,
+                        )
+                        # Extract executable path
+                        for line in result.stdout.split("\n"):
+                            if "{{dcc}}" in line.lower():
+                                parts = line.split()
+                                if len(parts) > 8:
+                                    paths.append(Path(parts[8]).parent)
+                                break
+                    except (ValueError, OSError):
+                        pass
+        except Exception as e:
+            log.debug(f"Failed to scan running processes: {e}")
+        return paths
+
+    def _validate_install(self, path: Path) -> bool:
+        """Check if path points to a valid {{DCC}} installation."""
+        if not path.exists():
+            return False
+
+        # {{DCC}}-specific validation
+        # Example: check for binary or key files
+        # return (path / "bin" / "{{dcc}}").exists()
+        return True
+
+    def _create_install(self, path: Path) -> Optional[{{DCC}}Install]:
+        """Create {{DCC}}Install object for a path."""
+        try:
+            version = self._detect_version(path)
+            is_valid_license = self._check_license(path)
+            breadcrumbs = self._get_breadcrumbs(path)
+
+            return {{DCC}}Install(
+                path=path,
+                version=version,
+                is_license_valid=is_valid_license,
+                license_type="eval" if not is_valid_license else "commercial",
+                breadcrumbs=breadcrumbs,
+            )
+        except Exception as e:
+            log.debug(f"Failed to create install for {path}: {e}")
+            return None
+
+    def _detect_version(self, path: Path) -> str:
+        """Detect {{DCC}} version from path or binary."""
+        # {{DCC}}-specific version detection
+        # Example: parse from folder name or binary -version flag
+        # return re.search(r'\d+\.\d+', str(path)).group(0)
+        return "unknown"
+
+    def _check_license(self, path: Path) -> bool:
+        """Check if {{DCC}} has valid license.
+
+        Returns True if license is valid (commercial or evaluation).
+        """
+        # {{DCC}}-specific license check
+        # Example: check env vars, license server, or license files
+        # return os.environ.get("{{DCC_LICENSE_FILE}}") exists
+        return True
+
+    def _get_breadcrumbs(self, path: Path) -> list[Path]:
+        """Get recently opened files (breadcrumbs).
+
+        Useful for helping Claude understand recent projects.
+        """
+        # {{DCC}}-specific: check recent files
+        # Example: read ~/.{{dcc}}/recent.json or equivalent
+        return []
+
+    @staticmethod
+    def _parse_version(version_str: str) -> tuple:
+        """Parse version string to tuple for sorting."""
+        try:
+            parts = version_str.split(".")
+            return tuple(int(p) for p in parts[:3])
+        except (ValueError, AttributeError):
+            return (0, 0, 0)
+
+
+def find_{{dcc}}() -> DiscoveryResult:
+    """Find {{PRETTY_DCC}} installations.
+
+    Returns:
+        DiscoveryResult with found installations
+    """
+    discoverer = {{DCC}}Discoverer()
+    return discoverer.discover()
+
+
+def launch_headless(install: {{DCC}}Install, addon_path: str | None = None) -> subprocess.Popen:
+    """Launch {{PRETTY_DCC}} in headless mode with MCP addon.
+
+    Args:
+        install: {{DCC}}Install from find_{{dcc}}()
+        addon_path: Optional path to addon code
+
+    Returns:
+        subprocess.Popen object (process still running)
+
+    Example:
+        result = find_{{dcc}}()
+        if result.found:
+            proc = launch_headless(result.best_install)
+            proc.wait()  # Wait for shutdown
+    """
+    # {{DCC}}-specific headless launch
+    # Example (Nuke):
+    #   /opt/nuke/bin/nuke -t -x script.nk
+    # Example (Houdini):
+    #   hython -c "import houdinimcp; houdinimcp.start()"
+
+    log.info(f"Launching {{DCC}} headless: {install}")
+
+    # Build command
+    # TODO: Implement DCC-specific launch
+    cmd = [str(install.path / "bin" / "{{dcc}}"), "--headless"]
+
+    if addon_path:
+        # Inject addon script
+        cmd.extend(["--python", f"import sys; sys.path.insert(0, '{addon_path}')"])
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        log.info(f"Launched {{DCC}} PID {proc.pid}")
+        return proc
+    except Exception as e:
+        log.error(f"Failed to launch {{DCC}}: {e}")
+        raise
+
+
+def register(server):
+    """Register discovery tools with MCP server.
+
+    Call in server.py:
+        from {{dcc}}mcp import discovery
+        discovery.register(server)
+    """
+    mcp = server.mcp
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def discover_{{dcc}}() -> dict:
+        """Discover {{PRETTY_DCC}} installations on this system.
+
+        Returns:
+            List of found installations with versions and paths
+        """
+        result = find_{{dcc}}()
+        return {
+            "status": "ok",
+            "found": result.found,
+            "best": {
+                "path": str(result.best_install.path),
+                "version": result.best_install.version,
+            }
+            if result.best_install
+            else None,
+            "all": [
+                {
+                    "path": str(install.path),
+                    "version": install.version,
+                    "license": install.license_type,
+                }
+                for install in result.all_installs
+            ],
+        }

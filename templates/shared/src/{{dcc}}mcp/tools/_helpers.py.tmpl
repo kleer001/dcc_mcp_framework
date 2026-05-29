@@ -1,0 +1,22 @@
+"""Shared helpers for tool modules."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from {{dcc}}mcp.connection import {{DCC}}Connection
+
+
+def send(conn: {{DCC}}Connection, cmd_type: str, params: dict | None = None) -> dict:
+    """Send a command to the addon and return the result."""
+    return conn.send_command(cmd_type, params or {})
+
+
+def require_confirm(action: str, details: str) -> dict:
+    """Return a response asking for confirmation before proceeding."""
+    return {
+        "action": action,
+        "message": f"{details}. Please confirm before proceeding.",
+        "requires_confirmation": True,
+    }

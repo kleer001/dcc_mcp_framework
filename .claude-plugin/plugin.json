@@ -1,0 +1,32 @@
+{
+  "name": "DCC MCP Framework",
+  "version": "1.0.0",
+  "description": "Mother-repo framework for building MCP servers for Digital Content Creation tools. Provides reusable templates and 4 Claude skills for scaffolding, extending, and auditing DCC MCP servers.",
+  "author": "kleer001",
+  "skills": [
+    {
+      "id": "scaffold-dcc-mcp",
+      "name": "Scaffold DCC MCP",
+      "description": "Create a new DCC MCP server repository from framework templates. Use whenever the user wants to bootstrap a new MCP server for a DCC tool (Maya, Cinema4D, Krita, Resolve, etc.).",
+      "entrypoint": "skills/scaffold-dcc-mcp/SKILL.md"
+    },
+    {
+      "id": "add-tool-domain",
+      "name": "Add Tool Domain",
+      "description": "Add a new tool domain (lighting, rendering, tracking, etc.) to an existing DCC MCP server.",
+      "entrypoint": "skills/add-tool-domain/SKILL.md"
+    },
+    {
+      "id": "add-advanced-feature",
+      "name": "Add Advanced Feature",
+      "description": "Add an opt-in advanced capability to a DCC MCP server: bidirectional events, offline RAG, persistent memory, headless auto-launch, version gating, plugin discovery, undo integration, or recipes.",
+      "entrypoint": "skills/add-advanced-feature/SKILL.md"
+    },
+    {
+      "id": "audit-dcc-mcp",
+      "name": "Audit DCC MCP",
+      "description": "Audit and improve an existing DCC MCP server against the framework blueprint for protocol conformance, thread-safety, mock parity, and best practices.",
+      "entrypoint": "skills/audit-dcc-mcp/SKILL.md"
+    }
+  ]
+}

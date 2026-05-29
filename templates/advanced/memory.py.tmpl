@@ -1,0 +1,202 @@
+"""Persistent session memory for {{PRETTY_DCC}} MCP.
+
+Stores session state (notes, tags, project metadata) that survives script reloads.
+Uses path traversal protection to prevent escaping MEMORY_DIR.
+
+Setup:
+  1. Initialize: init()
+  2. Register with server: register(server)
+
+Files are stored in: ~/.{{dcc}}mcp/memory/
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from {{dcc}}mcp.server import {{DCC}}MCPServer
+
+log = logging.getLogger("{{dcc}}mcp.memory")
+
+
+def _safe_path(base_dir: Path, relative_path: str) -> Path:
+    """Resolve a path safely, preventing directory traversal attacks.
+
+    Args:
+        base_dir: Base directory (e.g., ~/.{{dcc}}mcp/memory)
+        relative_path: Relative path (e.g., 'projects/my_project')
+
+    Returns:
+        Resolved path, guaranteed to be under base_dir
+
+    Raises:
+        ValueError: If relative_path tries to escape base_dir
+    """
+    base_resolved = base_dir.resolve()
+    target = (base_dir / relative_path).resolve()
+
+    if not str(target).startswith(str(base_resolved)):
+        raise ValueError(f"Path escape attempt: {relative_path}")
+
+    return target
+
+
+class MemoryStore:
+    """Persistent session memory."""
+
+    def __init__(self, memory_dir: str | None = None):
+        if memory_dir:
+            self.memory_dir = Path(memory_dir)
+        else:
+            self.memory_dir = Path.home() / f".{{dcc}}mcp" / "memory"
+
+        self.memory_dir.mkdir(parents=True, exist_ok=True)
+        log.info(f"Memory directory: {self.memory_dir}")
+
+    def _read_file(self, relative_path: str) -> dict:
+        """Read a JSON file from memory."""
+        path = _safe_path(self.memory_dir, relative_path)
+
+        if not path.exists():
+            return {}
+
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            log.warning(f"Corrupt JSON in {relative_path}")
+            return {}
+        except Exception as e:
+            log.error(f"Failed to read {relative_path}: {e}")
+            return {}
+
+    def _write_file(self, relative_path: str, data: dict) -> None:
+        """Write a JSON file to memory."""
+        path = _safe_path(self.memory_dir, relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            log.error(f"Failed to write {relative_path}: {e}")
+
+    def read(self, key: str) -> dict:
+        """Read a value from memory."""
+        return self._read_file(key)
+
+    def write(self, key: str, value: dict) -> None:
+        """Write a value to memory."""
+        self._write_file(key, value)
+
+    def list_keys(self) -> list[str]:
+        """List all memory keys."""
+        keys = []
+        for path in self.memory_dir.rglob("*.json"):
+            relative = path.relative_to(self.memory_dir)
+            key = str(relative).replace("\\", "/").replace(".json", "")
+            keys.append(key)
+        return sorted(keys)
+
+    def delete(self, key: str) -> None:
+        """Delete a memory entry."""
+        path = _safe_path(self.memory_dir, key)
+        if path.with_suffix(".json").exists():
+            path.with_suffix(".json").unlink()
+            log.info(f"Deleted memory: {key}")
+
+
+# Global memory store
+_memory_store: Optional[MemoryStore] = None
+
+
+def init(memory_dir: str | None = None) -> MemoryStore:
+    """Initialize the memory store."""
+    global _memory_store
+    if _memory_store is None:
+        _memory_store = MemoryStore(memory_dir)
+    return _memory_store
+
+
+def register(server: {{DCC}}MCPServer):
+    """Register memory tools with the MCP server.
+
+    Call this in server.py:
+        from {{dcc}}mcp import memory
+        memory.register(server)
+    """
+    mcp = server.mcp
+    store = init()
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def memory_read(key: str) -> dict:
+        """Read a value from persistent memory.
+
+        Memory persists across {{DCC}} sessions.
+
+        Args:
+            key: Memory key (e.g., 'notes', 'projects/my_project')
+
+        Returns:
+            Stored value (or empty dict if not found)
+        """
+        value = store.read(key)
+        return {
+            "status": "ok",
+            "key": key,
+            "value": value,
+            "exists": bool(value),
+        }
+
+    @mcp.tool()
+    def memory_write(key: str, value: dict) -> dict:
+        """Write a value to persistent memory.
+
+        Args:
+            key: Memory key
+            value: Data to store
+
+        Returns:
+            Status
+        """
+        store.write(key, value)
+        return {"status": "ok", "key": key}
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def memory_list() -> dict:
+        """List all memory entries.
+
+        Returns:
+            Keys stored in memory
+        """
+        keys = store.list_keys()
+        return {
+            "status": "ok",
+            "keys": keys,
+            "count": len(keys),
+        }
+
+    @mcp.tool()
+    def memory_delete(key: str, confirm: bool = False) -> dict:
+        """Delete a memory entry.
+
+        Args:
+            key: Memory key to delete
+            confirm: Must be True to confirm deletion
+
+        Returns:
+            Status or confirmation prompt
+        """
+        if not confirm:
+            return {
+                "action": "memory_delete",
+                "key": key,
+                "message": f"Confirm deletion of '{key}', then call with confirm=True",
+            }
+
+        store.delete(key)
+        return {"status": "ok", "key": key}
