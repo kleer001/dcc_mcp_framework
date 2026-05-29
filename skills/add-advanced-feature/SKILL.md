@@ -31,15 +31,61 @@ Options:
 - `reference/advanced-features.md` — Feature documentation
 - Relevant section describes: what, which repos have it, module, wiring, test
 
-### 3. Copy Module
+### 3. Copy and Customize Module
 
-Copy the appropriate template from `templates/advanced/`:
+Copy the appropriate template from `templates/advanced/` and apply substitutions:
 
-- `events.py.tmpl` → `src/{{dcc}}mcp/events.py`
-- `rag.py.tmpl` → `src/{{dcc}}mcp/rag.py`
-- `memory.py.tmpl` → `src/{{dcc}}mcp/memory.py`
-- `discovery.py.tmpl` → `src/{{dcc}}mcp/discovery.py`
-- `plugins.py.tmpl` → `src/{{dcc}}mcp/plugins.py`
+**Events:**
+```bash
+cp templates/advanced/events.py.tmpl src/{{dcc}}mcp/events.py
+# Substitute: {{DCC}}, {{dcc}}, {{PRETTY_DCC}}, {{NODE_NOUN}}
+# Addon-specific: implement _push_event calls in addon.py when DCC events occur
+```
+
+**RAG (Retrieval-Augmented Generation):**
+```bash
+cp templates/advanced/rag.py.tmpl src/{{dcc}}mcp/rag.py
+cp templates/advanced/scripts/ingest_docs.py.tmpl scripts/ingest_docs.py
+# No substitutions needed (stdlib-only)
+# Setup: python scripts/ingest_docs.py --source local --path /path/to/docs
+# Then: python -m {{dcc}}mcp.rag --build
+```
+
+**Memory:**
+```bash
+cp templates/advanced/memory.py.tmpl src/{{dcc}}mcp/memory.py
+# Substitute: {{dcc}}, {{PRETTY_DCC}}
+# Storage: ~/.{{dcc}}mcp/memory/ (auto-created)
+```
+
+**Discovery:**
+```bash
+cp templates/advanced/discovery.py.tmpl src/{{dcc}}mcp/discovery.py
+# Substitute: {{DCC}}, {{dcc}}, {{PRETTY_DCC}}, {{DCC_ENV_VAR}}, {{DCC_ADDON_PATH_*}}
+# TODO sections: _get_standard_paths(), _detect_version(), _check_license() for your DCC
+```
+
+**Plugins:**
+```bash
+cp templates/advanced/plugins.py.tmpl src/{{dcc}}mcp/plugins.py
+# No substitutions needed (stdlib-only)
+# Create: mkdir -p tools/plugins/
+# Example plugin: touch tools/plugins/my_tool.py
+```
+
+**Undo:**
+```bash
+cp templates/advanced/undo.py.tmpl src/{{dcc}}mcp/undo.py
+# Substitute: {{DCC}}, {{dcc}}, {{PRETTY_DCC}}, {{NODE_NOUN}}
+# TODO sections: pre_execute_undo_push(), undo(), redo() implementations
+```
+
+**Bootstrap Script:**
+```bash
+cp templates/advanced/scripts/bootstrap.sh.tmpl scripts/bootstrap.sh
+chmod +x scripts/bootstrap.sh
+# Substitute: {{DCC}}, {{dcc}}, {{PRETTY_DCC}}, {{DCC_ADDON_PATH_LINUX/MACOS/WINDOWS}}
+```
 
 ### 4. Wire Into `server.py`
 

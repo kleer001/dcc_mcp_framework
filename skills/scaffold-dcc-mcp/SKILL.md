@@ -84,6 +84,51 @@ For each tool:
 - **Mock handler** (`_cmd_<cmd>`) — Simulates behavior without DCC
 - **Tool registration** — `@mcp.tool()` with annotations
 
+**DCC API Mapping:**
+
+Adapt tool implementations to the target DCC's Python API. Common patterns:
+
+| Operation | Nuke | Blender | Houdini | Maya |
+|-----------|------|---------|---------|------|
+| **Get root** | `nuke.root()` | `bpy.data.scenes[0]` | `hou.scene()` | `cmds.ls(type="scene")` |
+| **Create node** | `nuke.createNode("Class")` | `bpy.ops.object.add()` | `hou.node("/obj").createNode("type")` | `cmds.createNode("type")` |
+| **Find node** | `nuke.toNode("name")` | `bpy.data.objects["name"]` | `hou.node("/obj/name")` | `cmds.ls("name")` |
+| **List nodes** | `nuke.allNodes()` | `bpy.data.objects[:]` | `hou.node("/obj").children()` | `cmds.ls(type="transform")` |
+| **Get property** | `node["knob"]()` | `obj.name` | `parm.eval()` | `cmds.getAttr("attr")` |
+| **Set property** | `node["knob"].setValue(v)` | `obj.name = v` | `parm.set(v)` | `cmds.setAttr("attr", v)` |
+
+**Code Generation Process:**
+
+1. Read exemplar from `templates/fastmcp/tools/graph.py.tmpl` or reference repo (e.g., nuke-mcp/tools/graph.py)
+2. Replace `{{API_MOD}}` calls with target DCC API equivalents (use mapping table above)
+3. Keep tool signatures and return types unchanged
+4. Keep error handling and annotations unchanged
+5. Document substitutions in comments (e.g., `# Nuke: nuke.toNode(name)`)
+
+**Example (Blender adaptation):**
+```python
+# Original (Nuke template):
+def _handle_create_node(params):
+    nuke_node = nuke.createNode(params["class"])
+    return {"status": "ok", "result": {"name": nuke_node.name()}}
+
+# Adapted (Blender):
+def _handle_create_node(params):
+    bpy.ops.object.add(type=params["class"])
+    obj = bpy.context.active_object
+    obj.name = params["name"]
+    return {"status": "ok", "result": {"name": obj.name}}
+```
+
+**Mock handler (same for all DCCs):**
+```python
+def _cmd_create_node(self, params):
+    """Mock: store node in state dict."""
+    node_id = len(self.nodes) + 1
+    self.nodes[node_id] = {"class": params["class"], "name": params["name"]}
+    return {"status": "ok", "result": {"id": node_id, "name": params["name"]}}
+```
+
 ### 4. Ensure Mock Parity
 
 For every addon handler, a matching mock handler exists:

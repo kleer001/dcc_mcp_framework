@@ -35,6 +35,50 @@ Document each tool:
 - Returns: `{"name": "...", "type": "..."}`
 - Annotation: read-only or destructive?
 
+### 2.5. Adapt Tool Implementations (DCC-API Mapping)
+
+Before implementing addon handlers, understand your DCC's Python API for the domain:
+
+**Example: Lighting Domain**
+
+| Operation | Nuke | Blender | Houdini | Maya |
+|-----------|------|---------|---------|------|
+| **Get all lights** | `[n for n in nuke.allNodes() if n.Class()=="Light"]` | `[o for o in bpy.data.objects if o.type=="LIGHT"]` | `[n for n in hou.node("/obj").children() if n.type().name()=="light"]` | `cmds.ls(type="light")` |
+| **Create light** | `nuke.createNode("Light")` | `bpy.ops.object.light_add()` | `hou.node("/obj").createNode("light")` | `cmds.createNode("light")` |
+| **Set intensity** | `node["intensity"].setValue(v)` | `obj.data.energy = v` | `node.parm("intensity").set(v)` | `cmds.setAttr("light.intensity", v)` |
+| **Get position** | `node["xpos"]()` (2D coords) | `obj.location[:]` (3D) | `node.parmTuple("t")[:]` (3D) | `cmds.xform("light", q=True, t=True)` |
+
+**Implementation pattern:**
+
+1. Choose a reference tool domain from an existing repo that matches your DCC
+   - Example: Using nuke-mcp/tools/lighting.py as reference for your Blender MCP
+2. Read through the tool signatures and return shapes
+3. Adapt addon handlers to call your DCC's API instead of Nuke's
+4. Keep mock handlers unchanged (they're DCC-independent)
+
+**Example: Blender lighting adapted from Nuke pattern**
+```python
+# Reference (from nuke-mcp/tools/lighting.py):
+def get_lights() -> dict:
+    result = conn.send_command("get_lights")
+    return result
+
+# Addon implementation (blender-specific):
+def _handle_get_lights(params: dict) -> dict:
+    dcc = _get_bpy()
+    lights = [
+        {"name": obj.name, "type": obj.data.type}
+        for obj in dcc.data.objects
+        if obj.type == "LIGHT"
+    ]
+    return {"status": "ok", "result": {"lights": lights}}
+
+# Mock implementation (unchanged):
+def _cmd_get_lights(self, params: dict) -> dict:
+    lights = [{"name": n, "type": self.lights[n]} for n in self.lights]
+    return {"status": "ok", "result": {"lights": lights}}
+```
+
 ### 3. Generate `tools/<domain>.py`
 
 Pattern (from reference/protocol.md):
