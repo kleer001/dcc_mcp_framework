@@ -1,0 +1,330 @@
+# {{PRETTY_DCC}} MCP Best Practices
+
+This document captures the convergent architecture, DCC-specific gotchas, and best practices for maintaining `{{dcc}}-mcp`.
+
+## The Architecture
+
+Two-process design communicating via TCP newline-delimited JSON:
+
+```
+Claude (AI client)
+  ↓ stdio JSON-RPC
+MCP Server (this repo)
+  ↓ TCP newline-JSON (localhost:{{PORT}})
+In-DCC Addon
+  ↓ main-thread marshalling
+{{PRETTY_DCC}} Python API ({{API_MOD}})
+```
+
+The socket server runs in {{PRETTY_DCC}}'s Python environment. Commands arrive on a background thread, must execute on {{PRETTY_DCC}}'s main thread, and return results via a queue.
+
+## {{PRETTY_DCC}}-Specific Thread Safety
+
+**Critical:** {{PRETTY_DCC}}'s Python API is NOT thread-safe. All calls must run on the main thread.
+
+### GUI Mode (Interactive)
+
+Use: `{{GUI_MARSHAL}}`
+
+In `addon.py`:
+```python
+def _run_in_{{dcc}}(func, *args):
+    """Execute func on {{PRETTY_DCC}}'s main thread."""
+    # TODO: Implement GUI marshalling
+    # Pattern: Schedule callback, block on result queue
+    return {{GUI_MARSHAL}}(func, args=args)
+```
+
+### Headless Mode (Scripted)
+
+Use: `serve_forever()` with queue drain loop on main thread.
+
+In `addon.py`:
+```python
+def serve_forever(self):
+    """Main thread drains command queue."""
+    self._main_queue = queue.Queue()
+    self.start()  # Background thread listens for socket
+    while self._running:
+        func, args, result_q = self._main_queue.get(timeout=0.1)
+        result = func(*args)
+        result_q.put(result)
+```
+
+## {{PRETTY_DCC}} API Patterns
+
+### Lazy Import
+
+Always import {{API_MOD}} lazily in addon:
+
+```python
+def _get_{{dcc}}():
+    """Import lazily so addon can be tested outside {{PRETTY_DCC}}."""
+    import {{API_MOD}}
+    return {{API_MOD}}
+```
+
+**Why:** Allows testing without {{PRETTY_DCC}} installed; enables mock mode.
+
+### Common API Calls
+
+Document the {{PRETTY_DCC}} API patterns used in this repo:
+
+```python
+# Get root/scene
+{{API_MOD}}.root()
+
+# Create node
+{{API_MOD}}.createNode("NodeClass")
+
+# Find node
+{{API_MOD}}.toNode("node_name")
+
+# List all nodes
+{{API_MOD}}.allNodes()
+
+# Get/set properties
+node["knob"].value()
+node["knob"].setValue(value)
+```
+
+TODO: Expand with actual {{PRETTY_DCC}} patterns.
+
+### Error Handling
+
+Always catch {{API_MOD}} errors and return structured JSON:
+
+```python
+def _handle_create_node(params):
+    try:
+        dcc = _get_{{dcc}}()
+        node = dcc.createNode(params["node_class"])
+        return {
+            "status": "ok",
+            "result": {"name": node.name(), "class": node.Class()}
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"{type(e).__name__}: {e}"
+        }
+```
+
+## Protocol Checklist
+
+Every handler must follow this pattern:
+
+### Request
+```json
+{"type":"<command>","params":{...}}
+```
+
+### Response (Success)
+```json
+{"status":"ok","result":{...}}
+```
+
+### Response (Error)
+```json
+{"status":"error","error":"<message>"}
+```
+
+**Never use** the Natron anti-pattern: `{"id":1,"method":"cmd","params":{...}}` ❌
+
+## Mock Parity Requirement
+
+For every `_handle_*` in addon, add a `_cmd_*` in `mock.py`:
+
+```python
+# addon.py
+def _handle_create_node(params):
+    return {"status": "ok", "result": {...}}
+
+# mock.py
+def _cmd_create_node(self, params):
+    self.nodes[name] = {"class": node_class}
+    return {"status": "ok", "result": {...}}
+```
+
+**Test:** `pytest -m "not integration"` must pass in mock mode.
+
+## Confirm Guards on Destructive Ops
+
+Any operation that permanently changes state requires `confirm=True`:
+
+```python
+@mcp.tool(annotations={"destructiveHint": True})
+def delete_node(name: str, confirm: bool = False) -> dict:
+    if not confirm:
+        return {
+            "action": "delete_node",
+            "name": name,
+            "message": "Confirm deletion, then call with confirm=True"
+        }
+    return conn.send_command("delete_node", {"name": name})
+```
+
+## Annotations for Claude
+
+Mark all tools with metadata:
+
+```python
+@mcp.tool(annotations={
+    "readOnlyHint": True,        # Does not modify state
+    "idempotentHint": True,      # Safe to call multiple times
+    "destructiveHint": True,     # Requires confirm=True
+})
+def my_tool(...): ...
+```
+
+This helps Claude decide whether to ask user permission.
+
+## Testing Strategy
+
+### Mock Tests (Run Always)
+```bash
+pytest -m "not integration"
+```
+
+Tests use `connection` fixture from `conftest.py`. Calls mock server, no {{PRETTY_DCC}} required.
+
+**Coverage:** Every command should have a test.
+
+### Integration Tests (Run with {{PRETTY_DCC}})
+```bash
+pytest -m integration
+```
+
+Mark with `@pytest.mark.integration`. Only run when {{PRETTY_DCC}} is available.
+
+```python
+@pytest.mark.integration
+def test_create_node_real(connection_real):
+    """Test against real {{PRETTY_DCC}} instance."""
+    result = connection_real.send_command("create_node", {...})
+    assert result["name"] == "..."
+```
+
+## Adding New Tools
+
+1. Define tool signature in `tools/domain.py`
+2. Implement addon handler in `addon.py`
+3. Implement mock handler in `mock.py`
+4. Wire into `server.py` (import + register)
+5. Add test in `tests/test_domain.py`
+6. Run: `pytest -m "not integration" && ruff check . && ruff format .`
+
+**Verify mock parity:** Mock test count == addon handler count.
+
+## Code Style
+
+- `ruff check .` — Linting
+- `ruff format .` — Auto-format
+- Line length: 100 chars
+- Naming: `snake_case` functions, `PascalCase` classes
+
+## Common {{PRETTY_DCC}} Gotchas
+
+TODO: Document DCC-specific gotchas here.
+
+Examples:
+- **PySide versions**: Nuke 16+ uses PySide6, fallback to PySide2
+- **Lazy DCC import**: Never `import {{API_MOD}}` at module level
+- **Socket reuse**: Set `SO_REUSEADDR` on server socket
+- **Daemon threads**: Socket listener must be daemon thread (`daemon=True`)
+
+## Deployment
+
+### For {{PRETTY_DCC}} Users
+
+1. Install: `pip install -e .`
+2. Add to {{PRETTY_DCC}} startup:
+   ```python
+   import {{dcc}}_mcp_addon
+   {{dcc}}_mcp_addon.start()
+   ```
+3. In Claude Code, configure `mcp.json` entry
+
+### Headless Mode
+
+```bash
+python -m {{dcc}}mcp.server --headless
+```
+
+Launches {{PRETTY_DCC}} in background, addon starts automatically, MCP server connects.
+
+## Version Gating
+
+Use handshake version to enable/disable features:
+
+```python
+version = parse_version(handshake)
+if version.major >= 17:
+    enable_advanced_tools()
+```
+
+## Anti-Patterns to Avoid
+
+❌ Direct API calls from socket thread (not main-thread-safe)
+❌ Missing confirm=True on destructive ops
+❌ Tools without annotations
+❌ Mock handlers without addon handlers (or vice versa)
+❌ Hard-coded paths or credentials
+❌ Synchronous socket operations (use async patterns for headless)
+❌ Natron-style `{id,method}` envelope (use `{type,params}`)
+
+## Debugging
+
+### Check Connection
+```bash
+python -c "from {{dcc}}mcp.connection import {{DCC}}Connection; c = {{DCC}}Connection(); c.connect()"
+```
+
+### Run in Mock Mode
+```bash
+python -m {{dcc}}mcp.server --mock
+```
+
+### Enable Debug Logging
+```bash
+python -m {{dcc}}mcp.server --debug
+```
+
+### Inspect Addon
+In {{PRETTY_DCC}} script editor:
+```python
+import {{dcc}}_mcp_addon
+server = {{dcc}}_mcp_addon.{{DCC}}MCPServer()
+server.start()
+print(f"Listening on port {{PORT}}")
+```
+
+## References
+
+- Framework: https://github.com/kleer001/dcc_mcp_framework
+- Protocol: reference/protocol.md (in framework)
+- Architecture: reference/architecture.md (in framework)
+- Threading: reference/threading.md (in framework)
+- Gotchas: reference/gotchas.md (in framework)
+
+## Maintenance Checklist
+
+When adding features:
+- [ ] Mock test written and passing
+- [ ] Addon handler implemented
+- [ ] Mock handler implemented
+- [ ] Tool registered in `server.py`
+- [ ] Annotations correct
+- [ ] Error handling (try/except)
+- [ ] Confirm guard if destructive
+- [ ] Ruff clean (`ruff check . && ruff format .`)
+- [ ] README updated if needed
+- [ ] Commit message clear (feat/fix/docs/test)
+
+When preparing release:
+- [ ] All tests pass: `pytest -m "not integration"`
+- [ ] Ruff clean
+- [ ] Version bumped in `pyproject.toml`
+- [ ] CHANGELOG updated
+- [ ] Tag created: `git tag v0.x.y`
+- [ ] README installation instructions tested

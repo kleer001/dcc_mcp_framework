@@ -60,9 +60,10 @@ Using the substitution map, generate:
   - Keep tool signatures and annotations unchanged
   - Document API differences in comments
 
-**New file:**
+**New files:**
 - `CLAUDE.md` (describe the generated repo; reference to framework)
 - `README.md` (installation, how to run, architecture overview)
+- `BESTPRACTICES.md` (DCC-specific best practices, gotchas, checklist) ← **Strongest feature**
 - `.scaffold.json` (record of substitutions made for future audits)
 
 ### 3. Generate Tool Exemplars
