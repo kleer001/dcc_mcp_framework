@@ -1,0 +1,306 @@
+"""{{DCC}}MCP Addon — Socket server running inside {{PRETTY_DCC}}.
+
+This file runs inside {{PRETTY_DCC}}'s Python environment. It creates a TCP socket server
+that listens for JSON commands from the {{DCC}}MCP server, executes them in the main thread,
+and returns structured JSON responses.
+
+No external dependencies beyond what {{PRETTY_DCC}} ships with.
+
+Usage:
+    In {{PRETTY_DCC}}'s script editor or init.py:
+        import {{dcc}}_mcp_addon
+        {{dcc}}_mcp_addon.start()
+"""
+
+import json
+import logging
+import queue
+import socket
+import threading
+
+log = logging.getLogger("{{DCC}}MCP")
+
+DEFAULT_PORT = {{PORT}}
+
+
+# ---------------------------------------------------------------------------
+# Lazy import
+# ---------------------------------------------------------------------------
+
+def _get_{{dcc}}():
+    """Import {{API_MOD}} lazily so this module can be imported outside {{PRETTY_DCC}}."""
+    import {{API_MOD}} as dcc_module
+    return dcc_module
+
+
+# ---------------------------------------------------------------------------
+# Command handlers
+# ---------------------------------------------------------------------------
+
+def _handshake_data() -> dict:
+    dcc = _get_{{dcc}}()
+    # Adapt these to your DCC API
+    return {
+        "type": "handshake",
+        "{{dcc}}_version": getattr(dcc, "__version__", "1.0"),
+        "variant": "standard",
+        "pid": __import__("os").getpid(),
+    }
+
+
+def _handle_ping(params: dict) -> dict:
+    return {"status": "ok", "result": "pong"}
+
+
+def _handle_get_scene_info(params: dict) -> dict:
+    dcc = _get_{{dcc}}()
+    # TODO: Adapt to your DCC API
+    return {
+        "status": "ok",
+        "result": {
+            "name": "{{SCENE_NOUN}}",
+            "frame_range": [1, 100],
+            "fps": 24.0,
+            "{{NODE_NOUN}}_count": 0,
+        },
+    }
+
+
+def _handle_get_{{NODE_NOUN}}_info(params: dict) -> dict:
+    dcc = _get_{{dcc}}()
+    name = params.get("{{NODE_NOUN}}_name")
+    # TODO: Implement with your DCC API
+    return {
+        "status": "ok",
+        "result": {
+            "name": name,
+            "class": "Unknown",
+            "xpos": 0,
+            "ypos": 0,
+        },
+    }
+
+
+def _handle_create_{{NODE_NOUN}}(params: dict) -> dict:
+    dcc = _get_{{dcc}}()
+    {{NODE_NOUN}}_class = params.get("{{NODE_NOUN}}_class", "Default")
+    name = params.get("name", f"{{{NODE_NOUN}}_class}1")
+    # TODO: Create {{NODE_NOUN}} via DCC API
+    return {
+        "status": "ok",
+        "result": {
+            "name": name,
+            "class": {{NODE_NOUN}}_class,
+        },
+    }
+
+
+def _handle_execute_code(params: dict) -> dict:
+    code = params.get("code", "")
+    try:
+        # TODO: Execute code in DCC environment
+        return {"status": "ok", "result": f"Executed: {code[:50]}"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# Command dispatch table
+COMMANDS = {
+    "ping": _handle_ping,
+    "get_scene_info": _handle_get_scene_info,
+    "get_{{NODE_NOUN}}_info": _handle_get_{{NODE_NOUN}}_info,
+    "create_{{NODE_NOUN}}": _handle_create_{{NODE_NOUN}},
+    "execute_code": _handle_execute_code,
+}
+
+
+# ---------------------------------------------------------------------------
+# Socket server
+# ---------------------------------------------------------------------------
+
+class {{DCC}}MCPServer:
+    """TCP socket server that listens for JSON commands from the MCP server."""
+
+    def __init__(self, port: int = DEFAULT_PORT):
+        self.port = port
+        self._server_sock: socket.socket | None = None
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._main_queue: queue.Queue | None = None
+
+    def start(self):
+        """Start the server in a background thread (GUI mode)."""
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+        log.info("{{DCC}}MCP server started on port %d", self.port)
+
+    def serve_forever(self):
+        """Run the server with main-thread command dispatch (for headless mode).
+
+        Starts the TCP listener in a background thread and processes commands
+        on the calling (main) thread. Blocks until stop() is called.
+        """
+        self._main_queue = queue.Queue()
+        self.start()
+        try:
+            while self._running:
+                try:
+                    func, args, result_q = self._main_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                try:
+                    result = func(*args)
+                except Exception as e:
+                    result = e
+                result_q.put(result)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self._main_queue = None
+            self.stop()
+
+    def stop(self):
+        """Stop the server."""
+        self._running = False
+        if self._server_sock:
+            try:
+                self._server_sock.close()
+            except OSError:
+                pass
+            self._server_sock = None
+        log.info("{{DCC}}MCP server stopped")
+
+    def _serve(self):
+        """Run the socket listener."""
+        self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_sock.settimeout(1.0)
+        self._server_sock.bind(("127.0.0.1", self.port))
+        self._server_sock.listen(1)
+
+        while self._running:
+            try:
+                client, addr = self._server_sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            self._handle_client(client)
+
+    def _run_in_{{dcc}}(self, func, *args):
+        """Call func in {{PRETTY_DCC}}'s main thread (GUI) or via queue (headless).
+
+        TODO: Replace with appropriate GUI marshalling for {{PRETTY_DCC}}:
+        - Nuke: nuke.executeInMainThread(func, args=args)
+        - Blender: bpy.app.timers.register(callback_wrapper)
+        - Houdini: QtCore.QTimer.singleShot(0, callback_wrapper)
+        """
+        dcc = _get_{{dcc}}()
+
+        # Headless mode: use queue
+        if self._main_queue is not None:
+            result_q = queue.Queue()
+            self._main_queue.put((func, args, result_q))
+            result = result_q.get(timeout=10)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        # GUI mode: call directly (TODO: implement GUI marshalling)
+        return func(*args)
+
+    def _handle_client(self, client: socket.socket):
+        """Handle a connected client."""
+        client.settimeout(None)
+
+        # Send handshake
+        handshake = self._run_in_{{dcc}}(_handshake_data)
+        if not isinstance(handshake, dict):
+            try:
+                client.close()
+            except OSError:
+                pass
+            return
+        self._send(client, handshake)
+
+        buffer = b""
+        while self._running:
+            try:
+                chunk = client.recv(1024 * 1024)
+            except OSError:
+                break
+            if not chunk:
+                break
+
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                try:
+                    command = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError as e:
+                    self._send(client, {"status": "error", "error": f"Invalid JSON: {e}"})
+                    continue
+
+                cmd_type = command.get("type", "")
+                params = command.get("params", {})
+
+                handler = COMMANDS.get(cmd_type)
+                if not handler:
+                    response = {"status": "error", "error": f"Unknown command: {cmd_type}"}
+                else:
+                    try:
+                        response = self._run_in_{{dcc}}(handler, params)
+                    except Exception as e:
+                        response = {"status": "error", "error": f"{type(e).__name__}: {e}"}
+
+                self._send(client, response)
+
+        try:
+            client.close()
+        except OSError:
+            pass
+
+    def _send(self, client: socket.socket, data: dict):
+        """Send a JSON response to the client."""
+        msg = json.dumps(data) + "\n"
+        try:
+            client.sendall(msg.encode("utf-8"))
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+_server: {{DCC}}MCPServer | None = None
+
+
+def start(port: int = DEFAULT_PORT):
+    """Start the {{DCC}}MCP addon server."""
+    global _server
+    if _server is None:
+        _server = {{DCC}}MCPServer(port=port)
+        _server.start()
+
+
+def stop():
+    """Stop the {{DCC}}MCP addon server."""
+    global _server
+    if _server:
+        _server.stop()
+        _server = None
+
+
+if __name__ == "__main__":
+    start()
+    try:
+        while True:
+            import time
+            time.sleep(1)
+    except KeyboardInterrupt:
+        stop()

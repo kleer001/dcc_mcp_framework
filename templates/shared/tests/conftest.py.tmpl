@@ -1,0 +1,23 @@
+"""Test fixtures for {{DCC}}MCP."""
+
+import pytest
+from {{dcc}}mcp.connection import {{DCC}}Connection, DEFAULT_PORT
+from {{dcc}}mcp.mock import Mock{{DCC}}Server
+
+
+@pytest.fixture
+def mock_server():
+    """Start a mock {{DCC}} server for testing."""
+    server = Mock{{DCC}}Server(port=DEFAULT_PORT)
+    server.start()
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+def connection(mock_server):
+    """Provide a connection to the mock {{DCC}} server."""
+    conn = {{DCC}}Connection("localhost", DEFAULT_PORT)
+    conn.connect(retries=1)
+    yield conn
+    conn.disconnect()

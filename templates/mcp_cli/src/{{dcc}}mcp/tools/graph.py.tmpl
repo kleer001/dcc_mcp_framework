@@ -1,0 +1,131 @@
+"""Core {{NODE_NOUN}} graph tools — inspect, create, modify, delete, connect, layout."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from {{dcc}}mcp.server import {{DCC}}MCPServer
+
+
+def register(server: {{DCC}}MCPServer):
+    mcp = server.mcp
+    conn = server.connection
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def get_scene_info() -> dict:
+        """Get information about the current {{PRETTY_DCC}} {{SCENE_NOUN}}.
+
+        Returns {{SCENE_NOUN}} name, frame range, FPS, and {{NODE_NOUN}} count.
+        """
+        return conn.send_command("get_scene_info")
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def get_{{NODE_NOUN}}_info({{NODE_NOUN}}_name: str) -> dict:
+        """Get detailed information about a specific {{NODE_NOUN}}.
+
+        Returns the {{NODE_NOUN}}'s class, position, and properties.
+
+        Args:
+            {{NODE_NOUN}}_name: The name of the {{NODE_NOUN}} to inspect.
+        """
+        return conn.send_command("get_{{NODE_NOUN}}_info", {"{{NODE_NOUN}}_name": {{NODE_NOUN}}_name})
+
+    @mcp.tool()
+    def create_{{NODE_NOUN}}(
+        {{NODE_NOUN}}_class: str,
+        name: str | None = None,
+        position: list[int] | None = None,
+    ) -> dict:
+        """Create a new {{NODE_NOUN}} in the {{SCENE_NOUN}}.
+
+        Args:
+            {{NODE_NOUN}}_class: The {{NODE_NOUN}} class (e.g., "Cube", "Light", "Camera").
+            name: Optional name for the {{NODE_NOUN}}. If not provided, {{PRETTY_DCC}} assigns a default.
+            position: Optional [x, y] position in the {{NODE_NOUN}} graph.
+        """
+        params = {"{{NODE_NOUN}}_class": {{NODE_NOUN}}_class}
+        if name is not None:
+            params["name"] = name
+        if position is not None:
+            params["position"] = position
+        return conn.send_command("create_{{NODE_NOUN}}", params)
+
+    @mcp.tool(annotations={"idempotentHint": True})
+    def modify_{{NODE_NOUN}}({{NODE_NOUN}}_name: str, parameters: dict) -> dict:
+        """Modify parameters on an existing {{NODE_NOUN}}.
+
+        Args:
+            {{NODE_NOUN}}_name: The name of the {{NODE_NOUN}} to modify.
+            parameters: Dict of parameter names to new values.
+        """
+        return conn.send_command("modify_{{NODE_NOUN}}", {
+            "{{NODE_NOUN}}_name": {{NODE_NOUN}}_name,
+            "parameters": parameters,
+        })
+
+    @mcp.tool(annotations={"destructiveHint": True})
+    def delete_{{NODE_NOUN}}({{NODE_NOUN}}_name: str, confirm: bool = False) -> dict:
+        """Delete a {{NODE_NOUN}} from the {{SCENE_NOUN}}.
+
+        This is a destructive action. You must set confirm=True after getting
+        user confirmation.
+
+        Args:
+            {{NODE_NOUN}}_name: The name of the {{NODE_NOUN}} to delete.
+            confirm: Must be True to proceed. If False, returns a description
+                     of what would be deleted without deleting it.
+        """
+        if not confirm:
+            return {
+                "action": "delete_{{NODE_NOUN}}",
+                "{{NODE_NOUN}}_name": {{NODE_NOUN}}_name,
+                "message": (
+                    f"This will permanently delete {{NODE_NOUN}} '{{{NODE_NOUN}}_name}'. "
+                    "Ask the user to confirm, then call again with confirm=True."
+                ),
+            }
+        return conn.send_command("delete_{{NODE_NOUN}}", {"{{NODE_NOUN}}_name": {{NODE_NOUN}}_name})
+
+    @mcp.tool()
+    def connect_{{NODE_NOUN}}s(
+        source_{{NODE_NOUN}}: str,
+        target_{{NODE_NOUN}}: str,
+        input_index: int = 0,
+    ) -> dict:
+        """Connect two {{NODE_NOUN}}s in the {{SCENE_NOUN}}.
+
+        Connects the output of one {{NODE_NOUN}} to the input of another.
+
+        Args:
+            source_{{NODE_NOUN}}: The name of the {{NODE_NOUN}} whose output to connect.
+            target_{{NODE_NOUN}}: The name of the {{NODE_NOUN}} whose input to connect to.
+            input_index: Which input on the target {{NODE_NOUN}} to connect to (default 0).
+        """
+        return conn.send_command("connect_{{NODE_NOUN}}s", {
+            "source_{{NODE_NOUN}}": source_{{NODE_NOUN}},
+            "target_{{NODE_NOUN}}": target_{{NODE_NOUN}},
+            "input_index": input_index,
+        })
+
+    @mcp.tool(annotations={"destructiveHint": True})
+    def execute_code(code: str, confirm: bool = False) -> dict:
+        """Execute arbitrary code in {{PRETTY_DCC}}'s environment.
+
+        This is a powerful but destructive tool. You must set confirm=True
+        after getting user confirmation.
+
+        Args:
+            code: {{PRETTY_DCC}} code to execute.
+            confirm: Must be True to proceed.
+        """
+        if not confirm:
+            return {
+                "action": "execute_code",
+                "code_preview": code[:200],
+                "message": (
+                    "This will execute code in {{PRETTY_DCC}}. "
+                    "Ask the user to confirm, then call again with confirm=True."
+                ),
+            }
+        return conn.send_command("execute_code", {"code": code})

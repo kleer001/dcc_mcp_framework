@@ -1,0 +1,58 @@
+"""Protocol and connection tests for {{DCC}}MCP."""
+
+import pytest
+from {{dcc}}mcp.connection import {{DCC}}Connection, {{DCC}}ConnectionError, DEFAULT_PORT
+
+
+def test_handshake(mock_server):
+    """Test that connection reads handshake correctly."""
+    conn = {{DCC}}Connection("localhost", DEFAULT_PORT)
+    handshake = conn.connect(retries=1)
+
+    assert handshake["type"] == "handshake"
+    assert "{{dcc}}_version" in handshake
+    assert "variant" in handshake
+    assert "pid" in handshake
+
+    conn.disconnect()
+
+
+def test_ping(connection):
+    """Test basic ping command."""
+    result = connection.send_command("ping")
+    assert result == "pong"
+
+
+def test_send_receive_command(connection):
+    """Test command/response roundtrip."""
+    result = connection.send_command("get_scene_info")
+
+    assert isinstance(result, dict)
+    assert "name" in result
+    assert "frame_range" in result
+
+
+def test_error_response(connection):
+    """Test error response handling."""
+    with pytest.raises(RuntimeError, match="not found"):
+        connection.send_command("get_{{NODE_NOUN}}_info", {"{{NODE_NOUN}}_name": "nonexistent"})
+
+
+def test_timeout_on_no_connection():
+    """Test that connection fails with appropriate error when server is down."""
+    conn = {{DCC}}Connection("localhost", 55555)  # Non-existent port
+
+    with pytest.raises({{DCC}}ConnectionError, match="Failed to connect"):
+        conn.connect(retries=1, base_delay=0.1)
+
+
+def test_json_command_formatting(connection):
+    """Test that commands are correctly formatted as JSON."""
+    # This is implicit in send_command, but we verify the protocol
+    result = connection.send_command("create_{{NODE_NOUN}}", {
+        "{{NODE_NOUN}}_class": "Test",
+        "name": "test_{{NODE_NOUN}}",
+    })
+
+    assert result["name"] == "test_{{NODE_NOUN}}"
+    assert result["class"] == "Test"

@@ -1,0 +1,101 @@
+"""{{DCC}}MCP — mcp[cli] server entry point.
+
+Connects to the {{DCC}} addon (or mock) and exposes tools to Claude via stdio.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+from {{dcc}}mcp.connection import {{DCC}}Connection, DEFAULT_HOST, DEFAULT_PORT
+from {{dcc}}mcp.tools import graph
+
+log = logging.getLogger("{{dcc}}mcp")
+
+
+class {{DCC}}MCPServer:
+    """Holds the FastMCP instance and shared state (connection)."""
+
+    def __init__(self, mcp: FastMCP, connection: {{DCC}}Connection, mock_server=None):
+        self.mcp = mcp
+        self.connection = connection
+        self._mock_server = mock_server
+
+
+def build_server(
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    mock: bool = False,
+    mock_version: str = "1.0",
+) -> FastMCP:
+    """Build and configure the mcp[cli] server.
+
+    If mock=True, starts a mock {{DCC}} socket server for offline development.
+    """
+    mock_server = None
+
+    if mock:
+        from {{dcc}}mcp.mock import Mock{{DCC}}Server
+
+        mock_server = Mock{{DCC}}Server(port=port, {{dcc}}_version=mock_version)
+        mock_server.start()
+        log.info("Mock {{PRETTY_DCC}} server started on port %d", port)
+
+    conn = {{DCC}}Connection(host, port)
+
+    try:
+        handshake = conn.connect()
+    except Exception:
+        if mock_server:
+            mock_server.stop()
+        raise
+
+    log.info("Connected to {{PRETTY_DCC}} %s", handshake.get("{{dcc}}_version", "unknown"))
+
+    mcp = FastMCP(
+        "{{DCC}}MCP",
+        instructions=(
+            f"You are connected to {{PRETTY_DCC}}. "
+            "Use the available tools to inspect and modify the {{SCENE_NOUN}}. "
+            "Always check the current state with get_scene_info before making changes."
+        ),
+    )
+
+    server = {{DCC}}MCPServer(mcp, conn, mock_server=mock_server)
+
+    # Register tool modules
+    graph.register(server)
+
+    return mcp
+
+
+def main():
+    parser = argparse.ArgumentParser(description="{{DCC}}MCP — MCP server for {{PRETTY_DCC}}")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="{{DCC}} addon host (default: localhost)")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="{{DCC}} addon port (default: {{PORT}})")
+    parser.add_argument("--mock", action="store_true", help="Use mock {{DCC}} socket for offline development")
+    parser.add_argument("--mock-version", default="1.0", help="Mock {{DCC}} version (default: 1.0)")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(name)s %(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+
+    mcp = build_server(
+        host=args.host,
+        port=args.port,
+        mock=args.mock,
+        mock_version=args.mock_version,
+    )
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
