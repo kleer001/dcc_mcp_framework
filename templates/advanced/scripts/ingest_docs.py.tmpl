@@ -1,0 +1,282 @@
+#!/usr/bin/env python
+"""Ingest {{PRETTY_DCC}} documentation for offline RAG search.
+
+This script downloads or copies documentation and prepares it for embedding.
+
+Usage:
+    python scripts/ingest_docs.py --source local --path /path/to/docs
+    python scripts/ingest_docs.py --source github --repo khronos/opengl-specs
+    python scripts/ingest_docs.py --source web --url https://docs.example.com
+
+    # Then build embeddings:
+    python -m {{dcc}}mcp.rag --build
+"""
+
+import argparse
+import json
+import logging
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Optional
+
+log = logging.getLogger(__name__)
+
+
+def setup_logging(debug: bool = False):
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+
+
+class DocIngestor:
+    """Download and prepare documentation for RAG."""
+
+    def __init__(self, output_dir: Optional[str] = None):
+        self.output_dir = Path(output_dir) if output_dir else Path.home() / ".{{dcc}}mcp" / "docs"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        log.info(f"Output directory: {self.output_dir}")
+
+    def ingest_local(self, source_path: str) -> int:
+        """Copy documentation from local filesystem.
+
+        Args:
+            source_path: Path to documentation (directory or file)
+
+        Returns:
+            Number of files copied
+        """
+        source = Path(source_path)
+        if not source.exists():
+            log.error(f"Source not found: {source}")
+            return 0
+
+        count = 0
+        if source.is_file():
+            # Single file
+            if source.suffix in [".md", ".txt", ".rst"]:
+                shutil.copy(source, self.output_dir / source.name)
+                log.info(f"Copied: {source.name}")
+                count = 1
+        else:
+            # Directory: copy all markdown/text files
+            for path in source.rglob("*"):
+                if path.is_file() and path.suffix in [".md", ".txt", ".rst"]:
+                    rel_path = path.relative_to(source)
+                    dest = self.output_dir / rel_path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(path, dest)
+                    count += 1
+
+        log.info(f"Ingested {count} files from {source}")
+        return count
+
+    def ingest_github(self, repo: str, branch: str = "main", path: str = "docs") -> int:
+        """Download documentation from GitHub repository.
+
+        Args:
+            repo: GitHub repo in format "owner/repo"
+            branch: Branch name (default: main)
+            path: Path within repo to docs (default: docs)
+
+        Returns:
+            Number of files downloaded
+        """
+        # Construct raw GitHub URL
+        url = f"https://github.com/{repo}/archive/refs/heads/{branch}.zip"
+        log.info(f"Downloading from {url}...")
+
+        try:
+            # Download zip
+            import urllib.request
+            zip_path = self.output_dir / f"{repo.replace('/', '_')}.zip"
+            urllib.request.urlretrieve(url, zip_path)
+
+            # Extract
+            import zipfile
+            with zipfile.ZipFile(zip_path) as z:
+                z.extractall(self.output_dir)
+
+            # Move docs to output dir
+            repo_name = repo.split("/")[1]
+            extract_dir = self.output_dir / f"{repo_name}-{branch}"
+            docs_source = extract_dir / path
+            if docs_source.exists():
+                count = sum(1 for _ in docs_source.rglob("*.md"))
+                for doc in docs_source.rglob("*.md"):
+                    rel_path = doc.relative_to(docs_source)
+                    dest = self.output_dir / rel_path
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy(doc, dest)
+            else:
+                log.warning(f"Docs path not found: {path}")
+                count = 0
+
+            # Cleanup
+            zip_path.unlink()
+            if extract_dir.exists():
+                shutil.rmtree(extract_dir)
+
+            log.info(f"Ingested {count} files from GitHub: {repo}")
+            return count
+
+        except Exception as e:
+            log.error(f"GitHub download failed: {e}")
+            return 0
+
+    def ingest_web(self, url: str, max_depth: int = 3) -> int:
+        """Scrape documentation from website.
+
+        Args:
+            url: Starting URL
+            max_depth: Maximum depth to crawl (default: 3)
+
+        Returns:
+            Number of pages downloaded
+        """
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+            from urllib.parse import urljoin, urlparse
+        except ImportError:
+            log.error("Web scraping requires 'requests' and 'beautifulsoup4'. Install: pip install requests beautifulsoup4")
+            return 0
+
+        visited = set()
+        count = 0
+
+        def crawl(current_url: str, depth: int):
+            nonlocal count
+
+            if depth > max_depth or current_url in visited:
+                return
+
+            visited.add(current_url)
+            log.debug(f"Crawling: {current_url}")
+
+            try:
+                response = requests.get(current_url, timeout=10)
+                if response.status_code != 200:
+                    return
+
+                soup = BeautifulSoup(response.content, "html.parser")
+
+                # Extract text
+                text = soup.get_text(separator="\n", strip=True)
+                if text:
+                    # Save as markdown
+                    filename = urlparse(current_url).path.strip("/").replace("/", "_") or "index"
+                    filepath = self.output_dir / f"{filename}.md"
+                    filepath.write_text(text, encoding="utf-8")
+                    count += 1
+                    log.info(f"Saved: {filename}")
+
+                # Find links
+                if depth < max_depth:
+                    for link in soup.find_all("a", href=True):
+                        href = link["href"]
+                        absolute_url = urljoin(current_url, href)
+                        if urlparse(absolute_url).netloc == urlparse(url).netloc:
+                            crawl(absolute_url, depth + 1)
+
+            except Exception as e:
+                log.warning(f"Failed to fetch {current_url}: {e}")
+
+        crawl(url, 0)
+        log.info(f"Ingested {count} pages from {url}")
+        return count
+
+    def list_ingested(self) -> int:
+        """List all ingested documentation files."""
+        files = list(self.output_dir.rglob("*.md")) + list(self.output_dir.rglob("*.txt"))
+        print(f"\nIngested documentation ({len(files)} files):\n")
+        for f in sorted(files):
+            rel = f.relative_to(self.output_dir)
+            size = f.stat().st_size
+            print(f"  {rel} ({size / 1024:.1f} KB)")
+        return len(files)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Ingest {{PRETTY_DCC}} documentation for offline RAG search",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scripts/ingest_docs.py --source local --path /path/to/docs
+  python scripts/ingest_docs.py --source github --repo foundry/nuke-docs
+  python scripts/ingest_docs.py --source web --url https://docs.foundry.com
+  python scripts/ingest_docs.py --list
+        """,
+    )
+    parser.add_argument(
+        "--source",
+        choices=["local", "github", "web"],
+        help="Documentation source",
+    )
+    parser.add_argument(
+        "--path",
+        help="Local path (for --source local)",
+    )
+    parser.add_argument(
+        "--repo",
+        help="GitHub repo in format 'owner/repo' (for --source github)",
+    )
+    parser.add_argument(
+        "--branch",
+        default="main",
+        help="GitHub branch (default: main)",
+    )
+    parser.add_argument(
+        "--url",
+        help="Website URL to scrape (for --source web)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="Output directory (default: ~/.{{dcc}}mcp/docs)",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List ingested documentation",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
+
+    args = parser.parse_args()
+    setup_logging(args.debug)
+
+    ingestor = DocIngestor(args.output_dir)
+
+    if args.list:
+        ingestor.list_ingested()
+        return
+
+    if not args.source:
+        parser.print_help()
+        return
+
+    if args.source == "local":
+        if not args.path:
+            log.error("--path required for --source local")
+            return
+        ingestor.ingest_local(args.path)
+    elif args.source == "github":
+        if not args.repo:
+            log.error("--repo required for --source github")
+            return
+        ingestor.ingest_github(args.repo, branch=args.branch)
+    elif args.source == "web":
+        if not args.url:
+            log.error("--url required for --source web")
+            return
+        ingestor.ingest_web(args.url)
+
+    log.info("\nNext: Build embeddings index")
+    log.info("  python -m {{dcc}}mcp.rag --build")
+
+
+if __name__ == "__main__":
+    main()

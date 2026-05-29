@@ -273,6 +273,58 @@ if version.major >= 17:
 ❌ Synchronous socket operations (use async patterns for headless)
 ❌ Natron-style `{id,method}` envelope (use `{type,params}`)
 
+## RAG Integration: Documentation as a Tool
+
+The **RAG (Retrieval-Augmented Generation) pipeline** is the backbone for real work. It tightly couples official {{PRETTY_DCC}} documentation to Claude's workflow.
+
+### Setup
+
+**One-time setup:**
+
+```bash
+# 1. Ingest documentation
+python scripts/ingest_docs.py --source github --repo owner/{{dcc}}-docs
+
+# 2. Build embeddings index
+python -m {{dcc}}mcp.rag --build
+
+# 3. Enable in server
+# (Already registered if you used add-advanced-feature)
+```
+
+### How It Works
+
+- Claude searches docs automatically: `search_docs("How do I create a {{NODE_NOUN}}?")`
+- Semantic search (vector similarity) or keyword fallback
+- Fully offline after `--build` step
+- Returns ranked results with relevance scores
+
+### Why This Matters
+
+**Without RAG:**
+- Claude guesses at API syntax (hallucination risk)
+- "I think the API is..." ❌
+
+**With RAG:**
+- Claude cites official docs
+- "According to {{PRETTY_DCC}} documentation..." ✓
+- No external API calls during work (offline)
+- No hallucination risk
+
+### Maintaining Documentation
+
+Keep docs fresh by running periodically:
+
+```bash
+# Check for updated docs on GitHub
+python scripts/ingest_docs.py --source github --repo owner/{{dcc}}-docs --force
+
+# Rebuild embeddings
+python -m {{dcc}}mcp.rag --build
+```
+
+See `reference/rag-pipeline.md` for detailed setup, troubleshooting, and extensibility.
+
 ## Debugging
 
 ### Check Connection
@@ -306,6 +358,7 @@ print(f"Listening on port {{PORT}}")
 - Architecture: reference/architecture.md (in framework)
 - Threading: reference/threading.md (in framework)
 - Gotchas: reference/gotchas.md (in framework)
+- **RAG Pipeline**: reference/rag-pipeline.md (in framework) ← **For docs integration**
 
 ## Maintenance Checklist
 
