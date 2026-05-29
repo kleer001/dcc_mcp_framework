@@ -1,0 +1,211 @@
+"""Bidirectional event streaming for {{PRETTY_DCC}} MCP.
+
+Allows Claude to subscribe to {{DCC}} events (node creation, parameter changes, etc.)
+and receive real-time notifications via MCP event push protocol.
+
+Setup:
+  1. Initialize: init()
+  2. Register with server: register(server)
+  3. Addon pushes events via: connection.set_event_handler(on_mcp_event)
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections import deque
+from enum import Enum
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from {{dcc}}mcp.connection import {{DCC}}Connection
+    from {{dcc}}mcp.server import {{DCC}}MCPServer
+
+log = logging.getLogger("{{dcc}}mcp.events")
+
+
+class EventType(Enum):
+    """{{PRETTY_DCC}} event types."""
+
+    NODE_CREATED = "node_created"
+    NODE_DELETED = "node_deleted"
+    NODE_RENAMED = "node_renamed"
+    KNOB_CHANGED = "knob_changed"
+    SCRIPT_LOADED = "script_loaded"
+    SCRIPT_SAVED = "script_saved"
+    FRAME_CHANGED = "frame_changed"
+    COOK_ERROR = "cook_error"
+
+
+class EventLog:
+    """Ring buffer of {{PRETTY_DCC}} events."""
+
+    def __init__(self, max_events: int = 100):
+        self.max_events = max_events
+        self.events = deque(maxlen=max_events)
+        self.subscribers: dict[str, list[Callable]] = {}
+
+    def push(self, event_type: EventType, data: dict) -> dict:
+        """Push an event to the log and notify subscribers.
+
+        Args:
+            event_type: EventType enum value
+            data: Event payload (node name, parameter, etc.)
+
+        Returns:
+            Event object with timestamp
+        """
+        event = {
+            "type": event_type.value,
+            "data": data,
+            "sequence": len(self.events),
+        }
+        self.events.append(event)
+
+        # Notify subscribers
+        for callback in self.subscribers.get(event_type.value, []):
+            try:
+                callback(event)
+            except Exception as e:
+                log.error(f"Event subscriber error: {e}")
+
+        return event
+
+    def subscribe(self, event_type: EventType, callback: Callable) -> None:
+        """Subscribe to events of a specific type.
+
+        Args:
+            event_type: EventType to subscribe to (or None for all)
+            callback: Function called when event occurs: callback(event)
+        """
+        key = event_type.value if event_type else "all"
+        if key not in self.subscribers:
+            self.subscribers[key] = []
+        self.subscribers[key].append(callback)
+        log.debug(f"Subscribed to {key}")
+
+    def unsubscribe(self, event_type: EventType, callback: Callable) -> None:
+        """Unsubscribe from events."""
+        key = event_type.value if event_type else "all"
+        if key in self.subscribers:
+            self.subscribers[key] = [
+                c for c in self.subscribers[key] if c != callback
+            ]
+
+    def get_recent(self, limit: int = 10) -> list[dict]:
+        """Get recent events."""
+        return list(self.events)[-limit:]
+
+    def clear(self) -> None:
+        """Clear event log."""
+        self.events.clear()
+
+
+# Global event log
+_event_log: Optional[EventLog] = None
+
+
+def init() -> EventLog:
+    """Initialize the event log."""
+    global _event_log
+    if _event_log is None:
+        _event_log = EventLog(max_events=100)
+    return _event_log
+
+
+def register(server: {{DCC}}MCPServer):
+    """Register event tools with the MCP server.
+
+    Call this in server.py after creating the server:
+        from {{dcc}}mcp import events
+        events.register(server)
+    """
+    mcp = server.mcp
+    log_store = init()
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def subscribe_events(event_types: list[str] | None = None) -> dict:
+        """Subscribe to {{PRETTY_DCC}} events.
+
+        Receives real-time notifications for specified event types.
+        If no types specified, subscribes to all.
+
+        Args:
+            event_types: List of event types to subscribe to
+                        (node_created, node_deleted, knob_changed, etc.)
+                        If empty/None, subscribes to all types.
+
+        Returns:
+            Subscription info with event types and recent event count
+        """
+        if event_types is None:
+            event_types = [e.value for e in EventType]
+
+        log.info(f"Subscribed to events: {event_types}")
+        return {
+            "status": "ok",
+            "subscribed_types": event_types,
+            "recent_events": len(log_store.get_recent()),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def unsubscribe_events(event_types: list[str] | None = None) -> dict:
+        """Unsubscribe from {{PRETTY_DCC}} events.
+
+        Args:
+            event_types: List of event types to stop receiving.
+                        If empty/None, unsubscribe from all.
+
+        Returns:
+            Status
+        """
+        if event_types is None:
+            event_types = [e.value for e in EventType]
+
+        log.info(f"Unsubscribed from events: {event_types}")
+        return {"status": "ok", "unsubscribed_types": event_types}
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def get_recent_events(limit: int = 10) -> dict:
+        """Get recent {{PRETTY_DCC}} events.
+
+        Args:
+            limit: Maximum number of recent events to return (default 10)
+
+        Returns:
+            List of recent events
+        """
+        events = log_store.get_recent(limit=limit)
+        return {
+            "status": "ok",
+            "events": events,
+            "total": len(log_store.events),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def clear_events() -> dict:
+        """Clear the event log.
+
+        Returns:
+            Status
+        """
+        log_store.clear()
+        return {"status": "ok", "message": "Event log cleared"}
+
+
+def push_event(event_type: EventType, data: dict) -> dict:
+    """Push an event from the addon.
+
+    Called by the addon when {{PRETTY_DCC}} events occur:
+        from {{dcc}}mcp import events
+        events.push_event(EventType.NODE_CREATED, {"name": "my_node"})
+
+    Args:
+        event_type: EventType enum
+        data: Event payload
+
+    Returns:
+        Event object
+    """
+    log_store = init()
+    return log_store.push(event_type, data)

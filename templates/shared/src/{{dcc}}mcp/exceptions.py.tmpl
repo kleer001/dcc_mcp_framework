@@ -1,0 +1,82 @@
+"""Custom exceptions for {{dcc}}-mcp.
+
+Provides DCC-specific exception classes for consistent error handling.
+"""
+
+
+class {{DCC}}Error(Exception):
+    """Base exception for {{dcc}}-mcp."""
+
+    pass
+
+
+class {{DCC}}ConnectionError({{DCC}}Error):
+    """Failed to connect to {{PRETTY_DCC}} or MCP socket.
+
+    Raised when:
+      - {{PRETTY_DCC}} is not running
+      - Socket connection fails
+      - Handshake times out
+
+    Example:
+        try:
+            conn = {{DCC}}Connection()
+            conn.connect()
+        except {{DCC}}ConnectionError as e:
+            print(f"Connection failed: {e}")
+    """
+
+    pass
+
+
+class {{DCC}}TimeoutError({{DCC}}Error):
+    """Command execution timed out.
+
+    Raised when:
+      - {{PRETTY_DCC}} takes too long to respond
+      - {{PRETTY_DCC}} is frozen or unresponsive
+
+    Example:
+        try:
+            result = conn.send_command("create_node", {"class": "Read"}, timeout=5.0)
+        except {{DCC}}TimeoutError:
+            print("{{PRETTY_DCC}} is not responding")
+    """
+
+    pass
+
+
+class {{DCC}}APIError({{DCC}}Error):
+    """{{PRETTY_DCC}} API call failed.
+
+    Raised when:
+      - Invalid parameters
+      - {{NODE_NOUN}} does not exist
+      - DCC API raises an exception
+
+    Example:
+        try:
+            conn.send_command("delete_node", {"name": "nonexistent"})
+        except {{DCC}}APIError as e:
+            print(f"API error: {e}")
+    """
+
+    pass
+
+
+class {{DCC}}ProtocolError({{DCC}}Error):
+    """MCP protocol violation or malformed message.
+
+    Raised when:
+      - Invalid JSON in socket message
+      - Missing required fields
+      - Response schema doesn't match expected
+
+    Example:
+        try:
+            result = conn._parse_response(malformed_json)
+        except {{DCC}}ProtocolError:
+            print("Server returned invalid response")
+    """
+
+    pass
