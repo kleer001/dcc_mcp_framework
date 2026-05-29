@@ -6,7 +6,7 @@ This is **not itself a runnable MCP server**. Instead, it provides the architect
 
 ## What It Is
 
-A reverse-engineered framework from four production DCC MCP implementations (Nuke, Blender, Houdini, Natron) that captures the unified two-process architecture:
+A framework reverse-engineered from four production DCC MCP implementations, capturing the unified two-process architecture:
 
 ```
 Claude (AI client)
@@ -18,11 +18,13 @@ In-DCC Addon (TCP socket server, runs in DCC's Python)
 DCC Python API (nuke / bpy / hou / NatronEngine)
 ```
 
-The framework provides:
+**Status:** Templates, docs, and skills are complete. Not yet tested end-to-end with a generated repo.
+
+What's included:
 - **15 reusable templates** (connection, addon, mock, tests, config; advanced features: events, RAG, memory, discovery, plugins, undo, bootstrap)
 - **13 reference documentation files** (architecture, protocol, threading, gotchas, advanced features, testing tiers, headless patterns, failure modes, domain knowledge checklist)
 - **4 Claude skills** (scaffold new repos, add tool domains, add advanced features, audit existing repos)
-- **Production patterns** (thread-safe queue + timer marshalling, mock parity, destructive op guards, resource cleanup, CI/CD infrastructure)
+- **Production patterns** from existing repos (queue + timer marshalling, mock parity, destructive op guards, resource cleanup)
 
 ## What It Is NOT
 
@@ -177,16 +179,14 @@ In `reference/`:
 - **domain-knowledge-checklist.md** — What to research and implement for your DCC
 - **advanced-features.md** — Events, RAG, memory, discovery, plugins, undo
 
-## Reference Implementations
+## Ground Truth
 
-These production repos show how the framework applies to real DCCs:
+The framework is reverse-engineered from four production DCC MCP repos. Study them to understand the convergent patterns this framework captures:
 
 - **nuke-mcp** — Queue-based marshalling, events, RAG, memory, discovery
 - **blender-mcp** — Timer-based marshalling, clean helpers
-- **houdini-mcp** — Event-loop marshalling, headless launch, RAG
-- **natron-mcp** — Teaches what *not* to do (wrong envelope pattern)
-
-Study the reference closest to your DCC's threading model.
+- **houdini-mcp** — Event-loop marshalling, headless launch
+- **natron-mcp** — Reference for what *not* to do (wrong envelope pattern)
 
 ## For Framework Maintainers
 
