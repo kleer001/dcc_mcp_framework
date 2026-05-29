@@ -37,42 +37,22 @@ This repository is **not**:
 
 ## Installation
 
-### Easy: Plugin Install (Recommended)
-
 In Claude Code, run:
 
 ```bash
 /plugin install https://github.com/kleer001/dcc_mcp_framework.git
 ```
 
-Then immediately use the skills in any Claude conversation:
+Then use the skills in any Claude conversation:
 
 ```
 /scaffold-dcc-mcp     # Create a new DCC MCP repo
-/add-tool-domain      # Add a new tool domain to an existing repo
-/add-advanced-feature # Add events, RAG, memory, etc. to a repo
-/audit-dcc-mcp        # Review an existing repo for framework conformance
+/add-tool-domain      # Add tools (lighting, rendering, etc.) to existing repo
+/add-advanced-feature # Add events, RAG, memory, discovery, plugins, undo
+/audit-dcc-mcp        # Review repo for conformance to framework
 ```
 
-No dependencies. No setup. The skills handle everything.
-
-### Manual: Clone and Use Locally
-
-If you want to browse the framework files, templates, and docs before using the skills:
-
-```bash
-git clone https://github.com/kleer001/dcc_mcp_framework.git
-cd dcc_mcp_framework
-```
-
-Then explore:
-- `reference/` — Read docs to understand the architecture
-- `templates/` — See the boilerplate structure
-- `skills/*/SKILL.md` — Understand what each skill does
-
-To use the skills, either:
-1. Copy the repo path and paste it into Claude Code's plugin installer, or
-2. Start a Claude conversation and use the skills directly (they access the repo remotely)
+No dependencies. No setup.
 
 ## Using the Skills
 
@@ -137,60 +117,6 @@ The skill will:
 - Report findings with file:line pointers
 - Offer fixes that reference the framework templates
 
-## Directory Structure
-
-```
-dcc_mcp_framework/
-├── reference/              # Single source of truth documentation
-│   ├── architecture.md     # Two-process design, component responsibilities
-│   ├── protocol.md         # Socket envelope spec, handshake, error handling
-│   ├── threading.md        # GUI marshalling patterns (queue, timer, event-loop)
-│   ├── gotchas.md          # PySide2/6, lazy imports, SO_REUSEADDR, etc.
-│   ├── advanced-features.md # Events, RAG, memory, discovery, plugins, undo
-│   ├── audit-checklist.md  # Conformance checklist for audit-dcc-mcp skill
-│   ├── failure-modes.md    # What if your DCC doesn't have Python API, plugins, etc.
-│   ├── domain-knowledge-checklist.md # Detailed research guide for DCC-specific implementation
-│   ├── headless-patterns.md # Queue vs timer vs event patterns per DCC
-│   ├── resource-cleanup.md # Socket/thread shutdown patterns
-│   ├── infrastructure.md   # CI/CD, coverage, pytest marks
-│   └── testing-tiers.md    # Unit→Mock→Headless→Real→Multi-version hierarchy
-│
-├── templates/              # Token-substitution boilerplate
-│   ├── PLACEHOLDERS.md     # {{DCC}}, {{dcc}}, {{PORT}}, etc. definitions
-│   ├── shared/             # SDK-agnostic (copy these)
-│   │   ├── connection.py   # Socket client/server, newline-JSON framing
-│   │   ├── mock.py         # Simulates addon for offline testing
-│   │   ├── addon.py.tmpl   # Addon scaffold (DCC-specific: you implement)
-│   │   ├── conftest.py     # Pytest fixtures (connection, mock mode)
-│   │   ├── tools/__init__.py
-│   │   ├── tools/_helpers.py # send(), require_confirm(), etc.
-│   │   └── mcp.json.tmpl   # Claude Code config
-│   ├── fastmcp/            # FastMCP SDK variant
-│   │   ├── pyproject.toml.tmpl
-│   │   ├── server.py.tmpl  # MCP server entry point
-│   │   └── tools/graph.py.tmpl # Exemplar tool domain
-│   ├── mcp_cli/            # mcp[cli] SDK variant (official Anthropic SDK)
-│   │   ├── pyproject.toml.tmpl
-│   │   ├── server.py.tmpl
-│   │   └── tools/graph.py.tmpl
-│   └── advanced/           # Copy-on-demand (opt-in features)
-│       ├── events.py.tmpl
-│       ├── memory.py.tmpl
-│       ├── discovery.py.tmpl
-│       ├── plugins.py.tmpl
-│       ├── undo.py.tmpl
-│       ├── scripts/bootstrap.sh.tmpl # Setup wizard
-│       └── scripts/ingest_docs.py.tmpl # RAG doc ingestion
-│
-├── skills/                 # Claude Code skill definitions
-│   ├── scaffold-dcc-mcp/SKILL.md    # Create new repo
-│   ├── add-tool-domain/SKILL.md     # Add tools/lighting, tools/rendering, etc.
-│   ├── add-advanced-feature/SKILL.md # Add events, RAG, memory, etc.
-│   └── audit-dcc-mcp/SKILL.md       # Review repo for conformance
-│
-└── CLAUDE.md              # Project instructions (what this repo is/isn't)
-```
-
 ## What the Framework Provides vs. What You Implement
 
 ### Framework Provides
@@ -240,73 +166,27 @@ Two-process design with queue + timer marshalling (thread-safe DCC access):
 - Every tool has a mock handler (mock parity)
 - Enables offline development and testing
 
-## Reference Documentation
+## Key Documentation
 
-See `reference/` for:
-- **architecture.md** — Two-process diagram, responsibilities, lifecycle
-- **protocol.md** — Envelope spec, framing, handshake, error handling
-- **threading.md** — GUI marshalling per DCC; headless serve_forever
-- **gotchas.md** — PySide2/6, lazy imports, SO_REUSEADDR, daemon threads, etc.
-- **advanced-features.md** — One section per feature (events, RAG, memory, discovery, plugins, undo, recipes)
-- **audit-checklist.md** — The framework conformance checklist
-
-## Templates
-
-The `templates/` directory holds:
-
-- `shared/` — SDK-agnostic core (connection.py, mock.py, addon, conftest, etc.)
-- `fastmcp/` — FastMCP-specific boilerplate (pyproject.toml, server.py, exemplar tools)
-- `mcp_cli/` — mcp[cli]-specific boilerplate (for official Anthropic SDK)
-- `advanced/` — Copy-on-demand modules (events, RAG, memory, discovery, plugins)
-
-Each template uses placeholder tokens (`{{DCC}}`, `{{dcc}}`, `{{PORT}}`, etc.) that the scaffold skill substitutes.
+In `reference/`:
+- **architecture.md** — Two-process design, component responsibilities
+- **protocol.md** — Socket envelope, handshake, error contract
+- **threading.md** — GUI marshalling patterns (queue, timer, event-loop)
+- **gotchas.md** — DCC-specific pitfalls and solutions
+- **failure-modes.md** — When your DCC doesn't have Python, plugins, etc.
+- **domain-knowledge-checklist.md** — What to research and implement for your DCC
+- **advanced-features.md** — Events, RAG, memory, discovery, plugins, undo
 
 ## Reference Implementations
 
 These production repos show how the framework applies to real DCCs:
 
-- **nuke-mcp** — Polished reference; demonstrates queue-based marshalling, events, RAG, memory, discovery
-- **blender-mcp** — Timer-based marshalling with bpy.app.timers; clean helpers
-- **houdini-mcp** — Event-loop marshalling; headless launch; RAG on Houdini docs
-- **natron-mcp** — Minimal implementation; teaches what *not* to do (wrong envelope)
+- **nuke-mcp** — Queue-based marshalling, events, RAG, memory, discovery
+- **blender-mcp** — Timer-based marshalling, clean helpers
+- **houdini-mcp** — Event-loop marshalling, headless launch, RAG
+- **natron-mcp** — Teaches what *not* to do (wrong envelope pattern)
 
-If you're building an MCP for a specific DCC, study the reference closest to your DCC's threading model.
-
-## Effort Estimate
-
-| Task | Time | Notes |
-|------|------|-------|
-| **Scaffold** (create new DCC MCP) | 1-2 hours | Templates + skills do most of the work |
-| **Add tool domain** (lighting, rendering, etc.) | 1-2 hours per domain | Depends on DCC API complexity |
-| **Add advanced feature** (events, RAG, etc.) | 2-4 hours | Copy template + wire into server |
-| **Full production repo** | 1-2 weeks | With comprehensive tools, tests, docs |
-
-Without the framework, estimate **4-6 weeks** for a polished, production-ready MCP.
-
-## How to Use This in Practice
-
-### Scenario 1: Building a New MCP for Cinema4D
-
-1. **Start:** Run `/scaffold-dcc-mcp` in Claude Code
-2. **Claude asks:** SDK choice, C4D API module, GUI marshalling method
-3. **Result:** Ready-to-test repo structure with mock tests passing
-4. **Next:** `/add-tool-domain` to add modeling, rendering tools
-5. **Optional:** `/add-advanced-feature` to add events, RAG, memory
-
-### Scenario 2: Reviewing Existing Repo for Best Practices
-
-1. **Start:** Run `/audit-dcc-mcp` pointing to your repo
-2. **Claude walks:** The conformance checklist, finds issues
-3. **Result:** Detailed report with file:line pointers and framework references
-4. **Next:** Claude can auto-fix issues or guide you through fixes
-
-### Scenario 3: Understanding the Architecture
-
-1. **Read:** `reference/architecture.md` for two-process overview
-2. **Read:** `reference/threading.md` for your DCC's marshalling pattern
-3. **Read:** `reference/domain-knowledge-checklist.md` for DCC-specific research guide
-4. **Check:** `reference/failure-modes.md` if your DCC has constraints
-5. **Study:** Code in a reference repo (e.g., nuke-mcp) that matches your DCC
+Study the reference closest to your DCC's threading model.
 
 ## For Framework Maintainers
 
@@ -326,18 +206,13 @@ To update templates:
 
 ## Contributing
 
-Issues and PRs welcome. Before proposing changes:
-
-- Read `CLAUDE.md` (project instructions)
-- Check if it's a framework gap (missing template, unclear docs) or a generated-repo issue (belongs in a DCC-specific repo)
-- Reference the ground-truth files in production repos (nuke-mcp, blender-mcp, etc.)
-- Test your changes against the audit-dcc-mcp conformance checklist
+Before proposing changes, read `CLAUDE.md` for project instructions. Ground truth is reverse-engineered from production repos (nuke-mcp, blender-mcp, houdini-mcp, natron-mcp).
 
 ## Support
 
-- **Framework questions:** Open an issue on this repo
-- **Generated repo issues:** Ask Claude Code to run `/audit-dcc-mcp` on your repo, fix findings
-- **DCC-specific questions:** Consult your DCC's Python API docs + `reference/domain-knowledge-checklist.md`
+- **Framework issues:** Open an issue on this repo
+- **Generated repo conformance:** Use `/audit-dcc-mcp` skill to identify gaps
+- **DCC-specific implementation:** Consult your DCC's Python docs + `reference/domain-knowledge-checklist.md`
 
 ## License
 
