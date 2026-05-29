@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{{dcc}}mcp"
+version = "0.1.0"
+description = "MCP server for {{PRETTY_DCC}}"
+authors = [{name = "Your Name", email = "you@example.com"}]
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.14,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+{{dcc}}-mcp = "{{dcc}}mcp.server:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: marks tests as requiring {{PRETTY_DCC}} (deselected by default)",
+]
+addopts = "-v -m 'not integration'"

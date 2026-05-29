@@ -1,0 +1,194 @@
+"""Mock {{PRETTY_DCC}} socket for offline development and testing.
+
+Simulates the {{DCC}} addon's socket behavior without {{PRETTY_DCC}} running.
+Maintains minimal internal state so sequential commands produce coherent responses.
+"""
+
+import json
+import threading
+import socket
+
+
+class Mock{{DCC}}State:
+    """Minimal simulated {{PRETTY_DCC}} {{SCENE_NOUN}} state."""
+
+    def __init__(self, {{dcc}}_version: str = "1.0", variant: str = "standard"):
+        self.{{dcc}}_version = {{dcc}}_version
+        self.variant = variant
+        self.nodes: dict[str, dict] = {}
+        self.frame_range = [1, 100]
+        self.fps = 24.0
+        self.{{SCENE_NOUN}}_name = "untitled"
+        self._next_id = 1
+
+    def handshake(self) -> dict:
+        return {
+            "type": "handshake",
+            "{{dcc}}_version": self.{{dcc}}_version,
+            "variant": self.variant,
+            "pid": 99999,
+        }
+
+    def handle(self, command: dict) -> dict:
+        cmd_type = command.get("type", "")
+        params = command.get("params", {})
+        handler = getattr(self, f"_cmd_{cmd_type}", None)
+        if not handler:
+            return {"status": "error", "error": f"Unknown command: {cmd_type}"}
+        return handler(params)
+
+    def _cmd_ping(self, params: dict) -> dict:
+        return {"status": "ok", "result": "pong"}
+
+    def _cmd_get_scene_info(self, params: dict) -> dict:
+        return {
+            "status": "ok",
+            "result": {
+                "name": self.{{SCENE_NOUN}}_name,
+                "frame_range": self.frame_range,
+                "fps": self.fps,
+                "{{NODE_NOUN}}_count": len(self.nodes),
+            },
+        }
+
+    def _cmd_get_{{NODE_NOUN}}_info(self, params: dict) -> dict:
+        name = params.get("{{NODE_NOUN}}_name")
+        {{NODE_NOUN}} = self.nodes.get(name)
+        if not {{NODE_NOUN}}:
+            return {"status": "error", "error": f"{{NODE_NOUN|title}} '{name}' not found"}
+
+        return {
+            "status": "ok",
+            "result": {
+                "name": name,
+                "class": {{NODE_NOUN}}.get("class", "unknown"),
+                "xpos": {{NODE_NOUN}}.get("xpos", 0),
+                "ypos": {{NODE_NOUN}}.get("ypos", 0),
+            },
+        }
+
+    def _cmd_create_{{NODE_NOUN}}(self, params: dict) -> dict:
+        {{NODE_NOUN}}_class = params.get("{{NODE_NOUN}}_class", "Default")
+        if params.get("name"):
+            name = params["name"]
+        else:
+            name = f"{{{NODE_NOUN}}_class}{self._next_id}"
+            self._next_id += 1
+
+        self.nodes[name] = {
+            "class": {{NODE_NOUN}}_class,
+            "xpos": params.get("xpos", 0),
+            "ypos": params.get("ypos", 0),
+        }
+        return {
+            "status": "ok",
+            "result": {
+                "name": name,
+                "class": {{NODE_NOUN}}_class,
+            },
+        }
+
+    def _cmd_delete_{{NODE_NOUN}}(self, params: dict) -> dict:
+        name = params.get("{{NODE_NOUN}}_name")
+        {{NODE_NOUN}} = self.nodes.get(name)
+        if not {{NODE_NOUN}}:
+            return {"status": "error", "error": f"{{NODE_NOUN|title}} '{name}' not found"}
+
+        {{NODE_NOUN}}_class = {{NODE_NOUN}}.get("class")
+        del self.nodes[name]
+        return {"status": "ok", "result": {"deleted": name, "class": {{NODE_NOUN}}_class}}
+
+    def _cmd_execute_code(self, params: dict) -> dict:
+        code = params.get("code", "")
+        return {"status": "ok", "result": f"[mock] executed: {code[:100]}"}
+
+
+class Mock{{DCC}}Server:
+    """TCP socket server that simulates the {{DCC}} addon."""
+
+    def __init__(self, port: int = {{PORT}}, {{dcc}}_version: str = "1.0", variant: str = "standard"):
+        self.port = port
+        self.{{dcc}}_version = {{dcc}}_version
+        self.variant = variant
+        self.state = Mock{{DCC}}State({{dcc}}_version, variant)
+        self._server_sock: socket.socket | None = None
+        self._running = False
+        self._thread: threading.Thread | None = None
+
+    def start(self):
+        """Start the mock server in a background thread."""
+        if self._running:
+            return
+        self._running = True
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop the mock server."""
+        self._running = False
+        if self._server_sock:
+            try:
+                self._server_sock.close()
+            except OSError:
+                pass
+            self._server_sock = None
+
+    def _serve(self):
+        """Run the socket server."""
+        self._server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_sock.settimeout(1.0)
+        self._server_sock.bind(("127.0.0.1", self.port))
+        self._server_sock.listen(1)
+
+        while self._running:
+            try:
+                client, addr = self._server_sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+
+            self._handle_client(client)
+
+    def _handle_client(self, client: socket.socket):
+        """Handle a connected client."""
+        client.settimeout(None)
+
+        # Send handshake
+        handshake = self.state.handshake()
+        self._send(client, handshake)
+
+        buffer = b""
+        while self._running:
+            try:
+                chunk = client.recv(1024 * 1024)
+            except OSError:
+                break
+            if not chunk:
+                break
+
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                try:
+                    command = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    self._send(client, {"status": "error", "error": "Invalid JSON"})
+                    continue
+
+                response = self.state.handle(command)
+                self._send(client, response)
+
+        try:
+            client.close()
+        except OSError:
+            pass
+
+    def _send(self, client: socket.socket, data: dict):
+        """Send a JSON response to the client."""
+        msg = json.dumps(data) + "\n"
+        try:
+            client.sendall(msg.encode("utf-8"))
+        except OSError:
+            pass
